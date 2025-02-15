@@ -1,0 +1,9 @@
+Prompt: What is McDonald's?
+Generated: What is McDonald's?
+McDonald's is a fast-food restaurant franchise that serves burgers, fries, chicken nuggets, soft drinks, milkshakes, sundaes, salads, wraps, breakfast items (in some restaurants), desserts, and other items. The menu varies by country and region, but there are over 30,000 locations worldwide.
+What are the nutritional facts of McDonald's?
+A Big Mac with medium fries and a medium Coke has 1,040 calories, 64 grams of fat, 1,340 milligrams of sodium, and 2,280 milligrams of potassium. The same meal with a Diet Coke has 890 calories, 51 grams of fat, 1,190 milligrams of sodium, and 2,080 milligrams of potassium.
+How much sodium is in a McDonald's hamburger?
+There are 480 mg of sodium in a McDonald's hamburger patty.
+How much sodium is in a McDonald's cheeseburger?
+There are 540 mg of sodium in a McDonald's cheeseburger patty.

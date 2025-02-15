@@ -1,0 +1,8 @@
+torch 2.5.1
+transformers
+accelerate
+pandas
+matplotlib
+Scikit-learn
+pyarrow
+flash-attn
