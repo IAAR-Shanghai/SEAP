@@ -18,7 +18,7 @@
         Xun Liang<sup>1*</sup>, <a href="https://scholar.google.com/citations?user=TxfCeEYAAAAJ&hl=en">Hanyu Wang</a><sup>1,*</sup>, 
         <a href="https://scholar.google.com/citations?user=6t4_yXMAAAAJ&hl=en">Shichao Song</a><sup>1,*</sup>, 
         Huayi Lai<sup>1</sup>, Simin Niu<sup>1</sup>, 
-        Jiawei Yang<sup>1</sup><br>
+        Jiawei Yang<sup>1</sup>, Jihao Zhao<sup>1</sup>, <br>
         Feiyu Xiong<sup>2</sup>, Bo Tang<sup>2</sup>, 
         Zhiyu Li<sup>2,†</sup>
     </p>
