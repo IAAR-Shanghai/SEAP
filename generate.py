@@ -5,9 +5,25 @@ import os
 import time
 
 def main(args):
+    """
+    Generate text using a pretrained language model and evaluate the generation speed and output.
+    
+    This function loads a pretrained model, generates text for a list of prompts, 
+    and saves the results to disk. It also measures and prints statistics such as 
+    total tokens generated, time taken, and tokens generated per second.
+
+    Args:
+        args (argparse.Namespace): The arguments parsed from the command line, including:
+            - model_root_path (str): Root directory where the model is stored.
+            - model_name (str): Model name or directory under --model_root_path.
+            - output_dir (str): Directory to save the generated text outputs.
+
+    Returns:
+        None
+    """
     device = torch.device('cuda')
 
-    # 尝试使用 AutoModelForCausalLM 加载模型
+    # Try to load the model using AutoModelForCausalLM
     try:
         print(f"Loading model from {args.model_root_path}/{args.model_name}...")
         model = AutoModelForCausalLM.from_pretrained(
@@ -26,8 +42,10 @@ def main(args):
     model.to(device)
     model.eval()
 
+    # Load the tokenizer
     tokenizer = AutoTokenizer.from_pretrained(os.path.join(args.model_root_path, args.model_name))
 
+    # Set model generation parameters
     generate_kwargs = {
         "max_new_tokens": 300,
         "min_new_tokens": 200,
@@ -37,19 +55,20 @@ def main(args):
         "penalty_alpha": 0.6,
     }
 
+    # List of prompts to generate text for
     prompts = [
         "AI can create a logo in seconds.",
         "What is McDonald's?",
     ]
 
-    # 输出路径，创建包含模型名称的子文件夹
+    # Output directory and path creation
     output_path = os.path.join(args.output_dir, args.model_name)
     os.makedirs(output_path, exist_ok=True)
 
-    total_tokens_generated = 0  # 用于计算总生成的token数量
-    generated_results = []  # 用来存储所有生成的结果
+    total_tokens_generated = 0  # To count total number of tokens generated
+    generated_results = []  # To store the generated text results
 
-    # 先处理所有输入和生成 ID
+    # Process all prompts and generate input_ids
     input_ids_list = []
     for prompt in prompts:
         with torch.no_grad():
@@ -59,29 +78,30 @@ def main(args):
                 input_ids = input_ids[:, :-1]
             input_ids_list.append(input_ids.to(device))
    
-    # 记录生成开始时间
+    # Record start time for generation
     start_time = time.time()
 
-    # 开始生成
+    # Start text generation
     for input_ids in input_ids_list:
-        # 生成文本
+        # Generate text
         generated_ids = model.generate(input_ids, **generate_kwargs)
         result = tokenizer.batch_decode(generated_ids.cpu(), skip_special_tokens=True)
         
-        # 将生成结果保存到列表
+        # Save the result to the list
         generated_results.append(result[0])
     
+    # Record end time for generation
     end_time = time.time()
 
-    # 计算总生成的 tokens 数量
+    # Calculate total tokens generated
     for result in generated_results:
         total_tokens_generated += len(tokenizer.encode(result))
 
-    # 计算每秒生成的 token 数量
+    # Calculate the rate of tokens generated per second
     elapsed_time = end_time - start_time
     tokens_per_sec = total_tokens_generated / elapsed_time if elapsed_time > 0 else 0
 
-    # 打印所有生成的结果以及相关统计信息
+    # Print all generated results and statistics
     for idx, result in enumerate(generated_results):
         print(f"Generated (Prompt {idx + 1}): {result}")
     
@@ -89,7 +109,7 @@ def main(args):
     print(f"Time taken: {elapsed_time:.2f} seconds")
     print(f"Tokens per second: {tokens_per_sec:.2f} Tokens/s")
 
-    # 保存生成的结果到文件
+    # Save generated results to files
     for idx, result in enumerate(generated_results):
         output_file_path = os.path.join(output_path, f"output_{prompts[idx][:10]}.txt")
         with open(output_file_path, 'w') as f:

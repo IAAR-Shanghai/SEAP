@@ -12,7 +12,7 @@ import numpy as np
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(project_root)
 
-# 引入自定义模块
+# Import custom modules
 from src.activations import load_activations, load_weight_l2_info
 from src.model_utils import load_model_and_tokenizer
 from src.pruning_utils.compute_scores import compute_all_layers_scores
@@ -28,26 +28,26 @@ def compute_weighted_scores(
     task_weight: int = 2
 ) -> dict:
     """
-    计算加权得分，用于生成通用的剪枝掩码。
+    Compute weighted scores to generate a unified pruning mask across multiple tasks.
     
     Args:
-        scores_dicts: 任务及其对应分数的字典。每个任务包含层级分数（attn_scores 和 mlp_scores）。
-        wikitext2_weight: wikitext2 数据集的权重。
-        task_weight: 其他任务的权重。
+        scores_dicts (dict): Dictionary of task scores. Each task contains layer scores (attn_scores and mlp_scores).
+        wikitext2_weight (int, optional): Weight for the wikitext2 dataset. Default is 3.
+        task_weight (int, optional): Weight for other tasks. Default is 2.
     
     Returns:
-        加权得分字典，每层的加权分数。
+        dict: A dictionary containing the weighted scores for each layer. 
     """
     weighted_scores = {}
 
-    # 计算wikitext2的加权得分
+    # Compute weighted scores for wikitext2
     for layer_idx in scores_dicts.get('wikitext2', {}).keys():
         weighted_scores[layer_idx] = {
             'attn_scores': scores_dicts['wikitext2'][layer_idx]['attn_scores'] * wikitext2_weight,
             'mlp_scores': scores_dicts['wikitext2'][layer_idx]['mlp_scores'] * wikitext2_weight
         }
 
-    # 计算其他任务的加权得分
+    # Compute weighted scores for other tasks
     for task_type, task_scores in scores_dicts.items():
         if task_type != 'wikitext2':
             for layer_idx, layer_scores in task_scores.items():
@@ -64,30 +64,30 @@ def compute_weighted_scores(
 
 def save_pruning_metadata(output_dir, task_type, method, structure, pruning_ratio, sparsities, mask_file):
     """
-    保存剪枝策略的元数据（如稀疏度、模型配置等），以便后续调用。
+    Save metadata related to the pruning strategy, such as sparsity, model configuration, etc., for later use.
     
     Args:
-        output_dir (str): 保存路径。
-        task_type (str): 任务类型。
-        method (str): 评分方法。
-        structure (str): 剪枝结构。
-        pruning_ratio (float): 剪枝比例。
-        sparsities (dict): 每层的稀疏度信息。
-        mask_file (str): 保存的掩码文件路径。
+        output_dir (str): Directory where metadata will be saved.
+        task_type (str): The task type (e.g., "wikitext2").
+        method (str): The method used for scoring (e.g., "WIFV").
+        structure (str): The pruning structure (e.g., "UL-LD").
+        pruning_ratio (float): The target pruning ratio.
+        sparsities (dict): Layer-wise sparsity information.
+        mask_file (str): Path to the saved mask file.
     """
-    # 构建保存文件夹的路径
+    # Construct the folder name based on pruning metadata
     folder_name = f"task={task_type}_method={method}_structure={structure}_ratio={pruning_ratio}"
     task_output_dir = os.path.join(output_dir, folder_name)
     
-    # 创建文件夹（如果不存在）    
+    # Create the folder if it doesn't exist
     os.makedirs(task_output_dir, exist_ok=True)
 
-    # 保存稀疏度信息
+    # Save sparsity information
     sparsity_file = os.path.join(task_output_dir, "sparsity.json")
     with open(sparsity_file, 'w') as f:
         json.dump(sparsities, f, indent=4)
     
-    # 保存其他信息，比如计算方法、剪枝比例等
+    # Save other metadata like scoring method and pruning ratio
     metadata = {
         "task_type": task_type,
         "method": method,
@@ -102,17 +102,18 @@ def save_pruning_metadata(output_dir, task_type, method, structure, pruning_rati
     print(f"[save_pruning_metadata] Metadata saved in {task_output_dir}")
 
 def main(args):
-    # 1) 设置随机种子（可选）
+    """Main function to compute pruning masks for all tasks."""
+    # 1) Set random seed (optional)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     
-    # 2) 构建模型路径并加载模型
+    # 2) Construct model path and load the model
     model_path = os.path.join(args.model_root_path, args.model_name)
     print(f"[compute_masks] Loading model from {model_path}")
     model, tokenizer = load_model_and_tokenizer(model_path)
     model.eval().to("cuda")
 
-    # 3) 加载激活数据和权重L2
+    # 3) Load activations and weight L2 data
     activations_dir = os.path.join(args.activations_root_path, args.model_name)
     print(f"[compute_masks] Loading activations from {activations_dir}")
     all_task_activations = load_activations(activations_dir)
@@ -121,7 +122,7 @@ def main(args):
     print(f"[compute_masks] Loading weight L2 from {weight_l2_file}")
     weight_l2_data = load_weight_l2_info(weight_l2_file)
 
-    # 4) 从模型中获取关键信息
+    # 4) Extract model configuration
     num_layers = model.config.num_hidden_layers
     hidden_size = model.config.hidden_size
     num_heads = model.config.num_attention_heads
@@ -133,22 +134,22 @@ def main(args):
     print(f"[compute_masks] Model config: num_layers={num_layers}, hidden_size={hidden_size}, "
           f"num_heads={num_heads}, intermediate_size={intermediate_size}")
     
-    # 5) 拿到所有任务(含 wikitext2)
+    # 5) Collect task types (including wikitext2)
     task_list = sorted(all_task_activations.keys())
     print(f"[compute_masks] Found tasks in activation data: {task_list}")
 
-    # 创建包含模型名称的文件夹路径
+    # Create a directory to save the results for the current model
     model_output_dir = os.path.join(args.output_dir, args.model_name)
     os.makedirs(model_output_dir, exist_ok=True)
 
-    # 6) 针对all_task_activations中的每个任务类型，循环生成并保存掩码
+    # 6) Generate and save masks for each task
     scores_dicts = {}
 
     for task_type in task_list:
         print(f"\n[compute_masks] Processing task={task_type} ...")
         activation_data = all_task_activations[task_type]
         
-        # 计算任务的分数
+        # Compute task-specific scores
         scores_dict_task = compute_all_layers_scores(
             activation_data=activation_data,
             weight_data=weight_l2_data,
@@ -161,24 +162,25 @@ def main(args):
         
         scores_dicts[task_type] = scores_dict_task
 
-        # 生成掩码
+        # Generate pruning masks
         attn_masks, mlp_masks = generate_masks_for_all_layers(
             scores_dict_task,
             structure=args.structure,
-            pruning_ratio=args.pruning_ratio,       # 这里表示目标平均稀疏度
-            hidden_size=hidden_size, # AL-AM 需要
-            num_heads=num_heads, # AL-AM 需要
-            total_layers=num_layers, # UL-LD 需要
-            logistic_k=args.logistic_k, # UL-LD 需要
-            logistic_x0=args.logistic_x0, # UL-LD 需要
+            pruning_ratio=args.pruning_ratio,       # Target average sparsity
+            hidden_size=hidden_size, # For AL-AM structure
+            num_heads=num_heads, # For AL-AM structure
+            total_layers=num_layers, # For UL-LD structure
+            logistic_k=args.logistic_k, # For UL-LD structure
+            logistic_x0=args.logistic_x0, # For UL-LD structure
         )
 
+        # Compute layer-wise sparsities
         sparsities = compute_layerwise_sparsity(attn_masks, mlp_masks)
         for layer_idx, data in sparsities.items():
             print(f"Layer {layer_idx}: attn_sparsity={data['attn_sparsity']:.3f}, "
                   f"mlp_sparsity={data['mlp_sparsity']:.3f}")
 
-        # 保存其他任务的掩码
+        # Save task-specific masks
         task_output_dir = os.path.join(
             model_output_dir, 
             f"task={task_type}_method={args.method}_structure={args.structure}_ratio={args.pruning_ratio}"
@@ -189,7 +191,7 @@ def main(args):
         save_masks_to_file(attn_masks, mlp_masks, mask_file)
         print(f"[compute_masks] Saved masks for task={task_type} to {mask_file}")
 
-        # 保存元数据
+        # Save pruning metadata
         save_pruning_metadata(
             output_dir=model_output_dir,
             task_type=task_type,
@@ -200,17 +202,17 @@ def main(args):
             mask_file=mask_file
         )
 
-    # 7) 如果use_generic_mask为True，计算并保存加权通用掩码
+    # 7) If use_generic_mask is True, compute and save a generic mask based on weighted scores
     if args.use_generic_mask:
         print(f"\n[compute_masks] Using generic mask for evaluation.")
         
         weighted_scores = compute_weighted_scores(scores_dicts)
         
-        # 生成通用掩码
+        # Generate the generic mask
         attn_masks, mlp_masks = generate_masks_for_all_layers(
             weighted_scores,
             structure=args.structure,
-            pruning_ratio=args.pruning_ratio,  # 这里表示目标平均稀疏度
+            pruning_ratio=args.pruning_ratio,  # Target average sparsity
             hidden_size=hidden_size,
             num_heads=num_heads,
             total_layers=num_layers,
@@ -223,7 +225,7 @@ def main(args):
             print(f"Layer {layer_idx}: attn_sparsity={data['attn_sparsity']:.3f}, "
                   f"mlp_sparsity={data['mlp_sparsity']:.3f}")
 
-        # 保存通用掩码
+        # Save generic mask
         generic_mask_output_dir = os.path.join(
             model_output_dir, 
             f"task=generic_method={args.method}_structure={args.structure}_ratio={args.pruning_ratio}"
@@ -257,7 +259,7 @@ if __name__ == "__main__":
                         help="Path to activations root dir (which has <model_name>/<task>/activations.pt).")
     parser.add_argument("--output_dir", type=str, default="./pruning_masks",
                         help="Where to save the generated masks.")
-    # 剪枝策略相关
+    # Pruning strategy options
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--method", type=str, default="WIFV", 
                         choices=["WIFV", "WIFN"],

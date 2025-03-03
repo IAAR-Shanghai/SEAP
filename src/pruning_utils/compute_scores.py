@@ -1,28 +1,28 @@
+# /src/pruning_utils/compute_scores.py
+
 """
-/src/pruning_utils/compute_scores.py
+This file is responsible for computing the "pruning scores" used for structured pruning from saved activation data (activation_data) and weight statistics (weight_data).
+Only two methods commonly used in FLAP are retained: **WIFV** and **WIFN**.
 
-该文件主要用于从已保存的激活数据 (activation_data) 和权重统计信息 (weight_data) 中，
-计算用于结构化剪枝的“重要性分数”(pruning scores)，
-只保留 FLAP 中常见的 WIFV 和 WIFN 两种方法。
+- **WIFV**: Weighted Input Feature Variance
+- **WIFN**: Weighted Input Feature Norm
 
-- WIFV: Weighted Input Feature Variance
-- WIFN: Weighted Input Feature Norm
+Approach:
+For Attention:
+  - WIFV = \sum_{d=1}^{head_dim} (variance_{head,d} * weight_{head,d})
+  - WIFN = mean_{d=1..head_dim}( sqrt(variance_{head,d}) * weight_{head,d} )
 
-思路:
-  对Attention:
-    - WIFV = \sum_{d=1}^{head_dim} (variance_{head,d} * weight_{head,d})
-    - WIFN = mean_{d=1..head_dim}( sqrt(variance_{head,d}) * weight_{head,d} )
-  对MLP:
-    - WIFV = variance[channel] * weight[channel]
-    - WIFN = sqrt(variance[channel]) * weight[channel]
-    
-返回 [num_heads] 或 [intermediate_size] 的聚合结果.
+For MLP:
+  - WIFV = variance[channel] * weight[channel]
+  - WIFN = sqrt(variance[channel]) * weight[channel]
+  
+Returns aggregated results of shape [num_heads] or [intermediate_size].
 """
 
 import torch
 from typing import Dict, Any
 
-# 只保留这两种方法
+# Only these two methods are supported
 SUPPORTED_METHODS = ["WIFV", "WIFN"]
 
 def compute_attention_head_scores(
@@ -35,15 +35,27 @@ def compute_attention_head_scores(
     method: str = "WIFV"
 ) -> torch.Tensor:
     """
-    计算单层注意力 heads 的重要性分数（head-level），支持 WIFV、WIFN。
-    与 prune_flap 保持一致的逻辑:
-      - 先拿到 [hidden_size] 的激活统计 (var 或 l2/sqrt(l2))
-      - 再和 [hidden_size] 的权重统计做元素相乘，仍是 [hidden_size]
-      - 最后 reshape -> [num_heads, head_dim] 并根据方法 (WIFV/WIFN) 做 sum/mean 等聚合
-      - 返回 shape=[num_heads] 的最终分数
+    Compute importance scores for attention heads in a given layer, supporting both WIFV and WIFN methods.
+    Logic:
+      - First, get activation statistics (variance or l2/sqrt(l2)) of shape [hidden_size]
+      - Then, element-wise multiply with weight statistics of shape [hidden_size]
+      - Finally, reshape to [num_heads, head_dim] and aggregate (sum/mean) based on method (WIFV/WIFN)
+      - Return final score of shape [num_heads]
+
+    Args:
+        layer_idx (int): Layer index
+        activation_info (Dict[str, Any]): Activation data for the layer
+        weight_info (Dict[int, Dict[str, torch.Tensor]]): Weight statistics for the layer
+        hidden_size (int): Hidden size dimension
+        num_heads (int): Number of attention heads
+        head_dim (int): Dimension of each head
+        method (str): Method for scoring ("WIFV" or "WIFN")
+    
+    Returns:
+        torch.Tensor: Computed attention head scores of shape [num_heads]
     """
 
-    # 1) 从激活信息中获取 var 或 l2
+    # 1) Get variance or l2 from the activation information
     post_agg_dict = activation_info["attention_post_aggregation"]
     var_activations = post_agg_dict.get("var", None)
     if var_activations is None:
@@ -54,14 +66,14 @@ def compute_attention_head_scores(
             f"Layer {layer_idx} shape mismatch: expected {hidden_size}, got {var_activations.shape[0]}"
         )
     
-    # 若同时存在 l2
+    # Check if l2 activations are present
     l2_activations = post_agg_dict.get("l2", None)
     if l2_activations is not None and l2_activations.shape[0] != hidden_size:
         raise ValueError(
             f"Layer {layer_idx} l2 shape mismatch: expected {hidden_size}, got {l2_activations.shape[0]}"
         )
 
-    # 2) 读取权重信息 [hidden_size]
+    # 2) Retrieve weight information for the layer
     w_layer_dict = weight_info.get(layer_idx, {})
     w_o_proj = w_layer_dict.get('o_proj', None)
     if w_o_proj is None:
@@ -72,13 +84,12 @@ def compute_attention_head_scores(
             f"o_proj shape mismatch: expected {hidden_size}, got {w_o_proj.shape[0]}"
         )
 
-    # 3) 根据 WIFV / WIFN 计算, 得到 shape=[hidden_size]
-    #    (先在 hidden_size 维上做 element-wise，再最后 reshape)
+    # 3) Compute scores based on WIFV / WIFN
     if method == "WIFV":
-        # WIFV = var * weight (element-wise)
+        # WIFV = variance * weight (element-wise multiplication)
         raw_scores = var_activations * w_o_proj
     elif method == "WIFN":
-        # WIFN = sqrt(var) * weight, 如果有 l2 则 sqrt(l2)
+        # WIFN = sqrt(variance) * weight (or sqrt(l2) if l2 is available)
         if l2_activations is not None:
             raw_scores = torch.sqrt(l2_activations) * w_o_proj
         else:
@@ -86,10 +97,9 @@ def compute_attention_head_scores(
     else:
         raise NotImplementedError(f"Only WIFV/WIFN are supported, got {method}")
 
-    # 4) 现在 raw_scores.shape=[hidden_size], reshape-> [num_heads, head_dim]
+    # 4) Reshape raw scores to [num_heads, head_dim] and calculate mean across head_dim
     raw_scores_2d = raw_scores.view(num_heads, head_dim)
-
-    scores = raw_scores_2d.mean(dim=1)
+    scores = raw_scores_2d.mean(dim=1)  # Mean aggregation
 
     return scores
 
@@ -102,31 +112,31 @@ def compute_mlp_channel_scores(
     method: str = "WIFV"
 ) -> torch.Tensor:
     """
-    计算单层 MLP 通道 (4*hidden_size) 的重要性分数 (WIFV / WIFN).
-    对应 down_proj 的输入, 即 "mlp_intermediate_states" 字段.
+    Compute importance scores for MLP channels (4*hidden_size) in a given layer (WIFV / WIFN).
+    This corresponds to the "down_proj" projection in MLP.
 
-    流程:
-      1) 读取 var / l2
-      2) 读取 down_proj 的统计
-      3) 做 elementwise 乘并得到 final scores: shape=[intermediate_size]
+    Process:
+      1) Retrieve variance or l2
+      2) Retrieve statistics for down_proj weights
+      3) Perform element-wise multiplication and return final scores of shape [intermediate_size]
 
     Args:
-        layer_idx: 当前层索引
-        activation_info: e.g. activation_info[layer_idx]["mlp_intermediate_states"] = {
-            "var": [...], "l2": [...]
-        }
-        weight_info: weight_info[layer_idx]["down_proj"] (e.g. shape=[intermediate_size])
-        method: "WIFV" or "WIFN"
-
+        layer_idx (int): Current layer index
+        activation_info (Dict[str, Any]): Activation data (including var, l2)
+        weight_info (Dict[int, Dict[str, torch.Tensor]]): Weight statistics for the layer
+        hidden_size (int): Hidden size
+        intermediate_size (int): Intermediate size for the MLP
+        method (str): "WIFV" or "WIFN"
+    
     Returns:
-        scores: shape=[intermediate_size], 每个 channel 的分数
+        torch.Tensor: Computed MLP channel scores of shape [intermediate_size]
     """
     mlp_dict = activation_info["mlp_intermediate_states"]
     var_activations = mlp_dict.get("var", None)
     if var_activations is None:
         raise ValueError(f"[compute_mlp_channel_scores] 'var' missing for layer={layer_idx}, method={method}")
 
-    # 防止数据维度>intermediate_size
+    # Handle dimension mismatch by truncating to intermediate_size
     if var_activations.shape[0] != intermediate_size:
         var_activations = var_activations[:intermediate_size]
 
@@ -134,7 +144,7 @@ def compute_mlp_channel_scores(
     if l2_activations is not None:
         l2_activations = l2_activations[:intermediate_size]
 
-    # 读取 down_proj 的统计
+    # Retrieve down_proj statistics
     w_layer_dict = weight_info.get(layer_idx, {})
     w_down_proj = w_layer_dict.get('down_proj', None)
     if w_down_proj is None:
@@ -143,13 +153,12 @@ def compute_mlp_channel_scores(
     if w_down_proj.shape[0] != intermediate_size:
         w_down_proj = w_down_proj[:intermediate_size]
 
-    # 4) 依据 WIFV / WIFN 计算
+    # Compute scores based on WIFV / WIFN
     if method == "WIFV":
-        # Weighted Input Feature Variance
+        # WIFV = variance * weight
         scores = var_activations * w_down_proj
-
     elif method == "WIFN":
-        # Weighted Input Feature Norm
+        # WIFN = sqrt(variance) * weight (or sqrt(l2) if l2 is available)
         if l2_activations is not None:
             scores = torch.sqrt(l2_activations) * w_down_proj
         else:
@@ -170,21 +179,33 @@ def compute_layer_scores(
     method: str = "WIFV"
 ):
     """
-    计算单层 (注意力 heads 的分数, MLP 通道分数) 并返回 (attn_scores, mlp_scores).
+    Compute scores for a single layer: attention heads scores and MLP channels scores.
+    Return both attention and MLP scores.
 
-    在本实现里:
-      attn_scores = shape [num_heads]
-      mlp_scores  = shape [intermediate_size]
+    - attn_scores: shape [num_heads]
+    - mlp_scores: shape [intermediate_size]
+    
+    Later, you can directly apply thresholding (e.g., UL-UM, AL-AM) on these scores.
 
-    后续可以直接对 attn_scores 做排序阈值 (如 UL-UM, AL-AM)
-    也可对 mlp_scores 做同样处理.
+    Args:
+        layer_idx (int): Layer index
+        activation_data (Dict[int, Dict[str, Dict[str, torch.Tensor]]): Activation data
+        weight_data (Dict[int, Dict[str, torch.Tensor]]): Weight data
+        hidden_size (int): Hidden size
+        num_heads (int): Number of attention heads
+        head_dim (int): Dimension of each attention head
+        intermediate_size (int): Intermediate size of MLP
+        method (str): Scoring method ("WIFV" or "WIFN")
+    
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: Attention scores and MLP scores
     """
     if layer_idx not in activation_data:
         raise ValueError(f"Missing activation data for layer {layer_idx}")
 
     layer_info = activation_data[layer_idx]
 
-    # 1) 注意力 heads
+    # 1) Compute attention scores
     attn_scores = compute_attention_head_scores(
         layer_idx=layer_idx,
         activation_info=layer_info,
@@ -195,7 +216,7 @@ def compute_layer_scores(
         method=method
     )
 
-    # 2) MLP channels
+    # 2) Compute MLP channel scores
     mlp_scores = compute_mlp_channel_scores(
         layer_idx=layer_idx,
         activation_info=layer_info,
@@ -217,15 +238,20 @@ def compute_all_layers_scores(
     method: str = "WIFV"
 ) -> Dict[int, Dict[str, torch.Tensor]]:
     """
-    针对整个模型(多层) 计算注意力与 MLP 的分数, 返回:
-      scores_dict[layer_idx] = {
-          "attn_scores": shape=[num_heads],
-          "mlp_scores":  shape=[intermediate_size]
-      }
+    Compute the scores for all layers in the model: both attention and MLP scores.
+    Returns a dictionary with scores for each layer.
 
-    仅支持 "WIFV" / "WIFN" 两种方法:
-      - WIFV: Weighted Input Feature Variance
-      - WIFN: Weighted Input Feature Norm
+    Args:
+        activation_data (Dict[int, Dict[str, Dict[str, torch.Tensor]]): Activation data
+        weight_data (Dict[int, Dict[str, torch.Tensor]]): Weight data
+        num_layers (int): Number of layers
+        hidden_size (int): Hidden size
+        num_heads (int): Number of attention heads
+        intermediate_size (int): Intermediate size of MLP
+        method (str): Scoring method ("WIFV" or "WIFN")
+    
+    Returns:
+        Dict[int, Dict[str, torch.Tensor]]: Layer-wise scores for attention and MLP
     """
     if method not in SUPPORTED_METHODS:
         raise ValueError(f"method={method} not in supported list: {SUPPORTED_METHODS}")
@@ -233,6 +259,7 @@ def compute_all_layers_scores(
     head_dim = hidden_size // num_heads
     scores_dict = {}
 
+    # Loop over each layer and compute scores
     for layer_idx in range(num_layers):
         if layer_idx not in activation_data:
             raise ValueError(f"Missing activation data for layer={layer_idx}")

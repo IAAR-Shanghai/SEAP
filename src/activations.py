@@ -1,4 +1,5 @@
 # activations.py
+
 import os
 import gc
 import random
@@ -10,41 +11,42 @@ from tqdm import tqdm
 
 class OnlineStats:
     """
-    使用在线更新策略来维护以下统计量：
-      - running_mean: 每个特征维度的平均值
-      - running_var:  每个特征维度的波动量（近似方差）
-      - running_l2:   每个特征维度的 L2 均值 (平均 x^2)
+    Maintains statistics using an online update strategy:
+      - running_mean: Average value for each feature dimension
+      - running_var:  Variance approximation for each feature dimension
+      - running_l2:   Mean of squared values (L2) for each feature dimension
 
-    思路：在接收到新的批次 x 时，将已有统计量按一定比例缩放后，再与该批次的统计量按相反比例融合。
-         这样我们无需存储所有样本数据，就能动态估计平均值、近似方差以及 L2 均值。
+    The idea is that when receiving a new batch x, we scale the existing statistics and blend them with the new batch 
+    in the reverse proportion. This allows us to dynamically estimate the mean, approximate variance, and L2 mean 
+    without storing all the sample data.
     """
 
     def __init__(self, hidden_dim=None):
         self.hidden_dim = hidden_dim
 
-        self.running_mean = None  # [D], 当前累积的特征平均值
-        self.running_var  = None  # [D], 当前累积的波动量(近似方差)
-        self.running_l2   = None  # [D], 平均 x^2，用于衡量特征分量的能量
-        self.sample_count = 0     # 当前所统计的总样本数(包括batch与sequence维度)
+        self.running_mean = None  # [D], running mean of features
+        self.running_var  = None  # [D], running variance of features
+        self.running_l2   = None  # [D], mean of squared features (L2)
+        self.sample_count = 0     # Total number of samples (including batch and sequence dimensions)
 
     def update(self, x: torch.Tensor):
         """
-        用一个新批次 x 来更新统计量。
-        支持形状 (batch, length, dim) 或 (N, dim)；在内部先 flatten 为 (N, D)。
+        Update the statistics using a new batch x.
+        Supports input shapes of (batch, length, dim) or (N, dim); internally flattened to (N, D).
 
-        步骤：
-          1. flatten 为 [N, D]
-          2. clamp, 避免数值过大或过小
-          3. 若是首次更新，则直接用该批次初始化统计量
-          4. 若已有统计量，则按在线合并方式更新 mean, var, l2
+        Steps:
+          1. Flatten to [N, D]
+          2. Clamp to avoid extreme values or overflows
+          3. If it's the first update, directly initialize the statistics
+          4. If statistics already exist, update them using online merging strategy
         """
-        # 1. flatten => [N, D]
+        # 1. Flatten => [N, D]
         x = x.view(-1, x.shape[-1])
 
-        # 2. clamp，避免出现极端大数导致浮点溢出
-        x = x.to(torch.float32)  # 或 x.float()
+        # 2. Clamp to avoid extreme values causing floating point overflow
+        x = x.to(torch.float32)  # Or x.float()
 
-        # debug: 检查 Inf/NaN
+        # Debug: Check for Inf/NaN
         if torch.isinf(x).any():
             print(f"[OnlineStats] After clamp, x still has Inf, shape={x.shape}")
         if torch.isnan(x).any():
@@ -52,7 +54,7 @@ class OnlineStats:
 
         n_new = x.shape[0]
         
-        # 3. 如果是第一次更新，则直接初始化
+        # 3. If it's the first update, initialize the statistics
         if self.sample_count == 0:
             self.hidden_dim = x.shape[-1]
             self.running_mean = x.mean(dim=0)        # [D]
@@ -61,7 +63,7 @@ class OnlineStats:
             self.sample_count = n_new
             return
 
-        # 4. 若已有统计量，则在线合并
+        # 4. If statistics already exist, update using online merging
         old_mean = self.running_mean.clone()
         total_count = self.sample_count + n_new
 
@@ -71,7 +73,7 @@ class OnlineStats:
         batch_mean = x.mean(dim=0)  # [D]
         self.running_mean = alpha_old * self.running_mean + alpha_new * batch_mean
 
-        # 4.1 更新波动量 running_var
+        # 4.1 Update variance (running_var)
         if total_count > 1:
             self.running_var *= (self.sample_count - 1) / (total_count - 1)
 
@@ -79,16 +81,16 @@ class OnlineStats:
 
         self.running_var += diff_sum / total_count
 
-        # 4.2 更新 L2 均值
+        # 4.2 Update L2 mean
         batch_l2 = (x ** 2).mean(dim=0)  # [D]
         self.running_l2 = alpha_old * self.running_l2 + alpha_new * batch_l2
 
-        # 4.3 更新计数
+        # 4.3 Update sample count
         self.sample_count = total_count
 
     def get_stats(self):
         """
-        返回当前的统计量: mean, var, l2。
+        Return the current statistics: mean, variance, and L2.
         """
         if self.sample_count == 0:
             return {
@@ -104,7 +106,7 @@ class OnlineStats:
 
     def reset(self):
         """
-        重置统计结果，清空已记录的数据。
+        Reset the statistics and clear recorded data.
         """
         self.running_mean = None
         self.running_var  = None
@@ -113,7 +115,7 @@ class OnlineStats:
 
 class ActivationHookManager:
     """
-    管理前向传播 Hook，用于收集激活值。
+    Manages forward hooks to collect activations.
     """
     def __init__(self):
         self.layer_activations = {}
@@ -128,8 +130,8 @@ class ActivationHookManager:
 
     def get_layer_hooks(self, layer_idx, layer):
         """
-        为每个模块返回 Hook 函数，更新统计激活值。
-        这里不再传递权重给 update，只聚焦激活值统计。
+        Return hook functions for each module to update activation statistics.
+        Here we focus on the activation statistics, without passing weights to update.
         """
         def q_proj_hook(module, input, output):
             self.layer_activations[layer_idx]['attention_input_states'].update(
@@ -154,7 +156,7 @@ class ActivationHookManager:
         return q_proj_hook, o_proj_hook, gate_proj_hook, down_proj_hook
 
     def register_activation_hooks(self, model):
-        """为模型每一层注册 Hook，用于收集激活值。"""
+        """Register hooks for each layer in the model to collect activations."""
         self.layer_activations.clear()
         for i, layer in enumerate(model.model.layers):
             self.layer_activations[i] = self._init_stats_dict()
@@ -165,7 +167,7 @@ class ActivationHookManager:
             layer.mlp.down_proj.register_forward_hook(d_hook)
 
     def clear_activations(self):
-        """清空当前收集的激活统计数据。"""
+        """Clear the currently collected activation statistics."""
         for layer_idx in self.layer_activations:
             for key in self.layer_activations[layer_idx]:
                 self.layer_activations[layer_idx][key].reset()
@@ -173,11 +175,11 @@ class ActivationHookManager:
 
 def save_activations(model, tokenizer, hook_manager, shot_inputs, task_types, output_root='../activations'):
     """
-    针对不同任务类型的 prompts，调用模型进行推理并通过 Hook 收集激活值，最后保存到文件。
+    Run inference on different task prompts, collect activations via hooks, and save them to files.
     """
     os.makedirs(output_root, exist_ok=True)
 
-    # 按任务类型分组 prompts
+    # Group prompts by task type
     task_to_prompts = {}
     for prompt, ttype in zip(shot_inputs, task_types):
         task_to_prompts.setdefault(ttype, []).append(prompt)
@@ -185,19 +187,19 @@ def save_activations(model, tokenizer, hook_manager, shot_inputs, task_types, ou
     model.eval()
     with torch.no_grad():
         for ttype, prompts in task_to_prompts.items():
-            # 每次处理前先清空统计数据
+            # Clear activation statistics before processing
             hook_manager.clear_activations()
 
             for prompt in tqdm(prompts, desc=f"Processing {ttype}", unit="prompt"):
                 inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
                 _ = model(**inputs)
 
-                # 释放临时变量占用的显存
+                # Release temporary variables to free up memory
                 del inputs
                 gc.collect()
                 torch.cuda.empty_cache()
 
-            # 获取统计结果
+            # Get the statistics after processing all prompts
             final_dict = {}
             for layer_idx, keys_dict in hook_manager.layer_activations.items():
                 final_dict[layer_idx] = {}
@@ -209,12 +211,12 @@ def save_activations(model, tokenizer, hook_manager, shot_inputs, task_types, ou
                         "l2":   stats["l2"].float()
                     }
 
-            # 清空 hook_manager 统计数据
+            # Clear hook manager statistics
             hook_manager.clear_activations()
             gc.collect()
             torch.cuda.empty_cache()
 
-            # 保存结果
+            # Save the results
             task_dir = os.path.join(output_root, ttype)
             os.makedirs(task_dir, exist_ok=True)
             save_path = os.path.join(task_dir, 'activations.pt')
@@ -226,7 +228,7 @@ def save_activations(model, tokenizer, hook_manager, shot_inputs, task_types, ou
 
 def load_activations(root_path='../activations'):
     """
-    从给定目录加载所有已保存的激活数据，并按任务类型组织返回。
+    Load all saved activations from the given directory and return them organized by task type.
     """
     task_to_activations = {}
     if not os.path.exists(root_path):
@@ -235,7 +237,7 @@ def load_activations(root_path='../activations'):
     for ttype in os.listdir(root_path):
         task_dir = os.path.join(root_path, ttype)
         if os.path.isdir(task_dir):
-            print('Loading:',ttype)
+            print('Loading:', ttype)
             activations_file = os.path.join(task_dir, 'activations.pt')
             if os.path.exists(activations_file):
                 loaded_acts = torch.load(activations_file)
@@ -244,8 +246,9 @@ def load_activations(root_path='../activations'):
 
 def compute_and_save_weight_l2(model, save_path):
     """
-    只需一次性地计算模型各层关心的权重的L2范数，并保存为文件。
-    按 FLAP 方式，对 o_proj (input channels) 与 down_proj (input channels) 做列维度的 L2 汇总。
+    Compute the L2 norm of weights from specific layers in the model (o_proj and down_proj),
+    and save them as a file. The L2 norm is computed across the input channels (dim=0) for 
+    both 'o_proj' and 'down_proj' weights.
     """
     weight_l2_info = {}
     for i, layer in enumerate(model.model.layers):
@@ -270,8 +273,8 @@ def compute_and_save_weight_l2(model, save_path):
 
 def load_weight_l2_info(weight_l2_file):
     """
-    从指定文件加载模型各层的权重L2范数信息。
-    返回一个嵌套字典：
+    Load the weight L2 norm information for each layer from a specified file.
+    Returns a nested dictionary:
       {layer_idx: {'o_proj': tensor_of_l2, 'down_proj': tensor_of_l2, ...}, ...}
     """
     if not os.path.exists(weight_l2_file):
@@ -283,8 +286,8 @@ def load_weight_l2_info(weight_l2_file):
 
 def aggregate_task_activations(task_activations):
     """
-    构造示例性聚合函数，将每个任务的激活数据拆成 Subset_1 和 Subset_2。
-    你也可以按需对数据进行进一步处理或聚合。
+    Aggregates activation data for each task by splitting them into 'Subset_1' and 'Subset_2'.
+    You can further process or aggregate the data as needed.
     """
     aggregated_data = {}
     for ttype, layer_data in task_activations.items():
@@ -310,17 +313,17 @@ def plot_selected_neurons_activations(
     plot_field='mean',
     fontsize=48,
     tick_fontsize=36,
-    cbar_fontsize=36,        # 色条相关字体大小
+    cbar_fontsize=36,        # Font size for colorbar labels
     random_seed=None,
-    hspace=0.6,              # 子图之间的高度间距
-    wspace=0.3,              # 子图之间的宽度间距
-    normalize=True           # 新增：是否进行 z-score 标准化
+    hspace=0.6,              # Height space between subplots
+    wspace=0.3,              # Width space between subplots
+    normalize=True           # Whether to perform z-score normalization
 ):
     """
-    绘制激活值热力图的示例函数，支持选择指定层、指定神经元、指定任务进行展示。
-    通过 normalize 控制是否对数据进行 z-score 标准化。
+    Plots activation heatmaps for selected neurons across specific layers and tasks.
+    The user can choose to normalize the data using z-score normalization.
     """
-
+    
     def z_score_standardize(data):
         std_val = np.std(data)
         if std_val == 0:
@@ -332,7 +335,7 @@ def plot_selected_neurons_activations(
         task_indices = range(len(task_types))
     selected_task_types = [task_types[i] for i in task_indices]
 
-    # 如果 neuron_indices 是整数，随机挑选指定数量的神经元
+    # If neuron_indices is an integer, randomly select the specified number of neurons
     if isinstance(neuron_indices, int):
         num_neurons_to_select = neuron_indices
         found_neuron_count = None
@@ -349,9 +352,9 @@ def plot_selected_neurons_activations(
             if found_neuron_count is not None:
                 break
         if found_neuron_count is None:
-            raise ValueError("无法找到可用的神经元数据。")
+            raise ValueError("Unable to find available neuron data.")
         if num_neurons_to_select > found_neuron_count:
-            raise ValueError(f"请求的神经元数量 {num_neurons_to_select} 超出可用神经元总数 {found_neuron_count}。")
+            raise ValueError(f"Requested number of neurons {num_neurons_to_select} exceeds available neurons {found_neuron_count}.")
         if random_seed is not None:
             random.seed(random_seed)
         neuron_indices = random.sample(range(found_neuron_count), num_neurons_to_select)
@@ -359,14 +362,14 @@ def plot_selected_neurons_activations(
     num_task_types = len(selected_task_types)
     num_subsets = len(subsets)
 
-    # 创建子图
+    # Create subplots
     fig, axes = plt.subplots(num_subsets, num_task_types,
                              figsize=(len(neuron_indices) * num_task_types,
                                       len(layers_to_plot) * num_subsets * 2))
-    # 调整子图间的间距
+    # Adjust space between subplots
     fig.subplots_adjust(hspace=hspace, wspace=wspace)
 
-    # 处理 axes 的形状，保证可以通过 axes[row_idx, col_idx] 索引
+    # Handle axes shape to ensure proper indexing
     if num_subsets == 1 and num_task_types == 1:
         axes = np.array([[axes]])
     elif num_subsets == 1:
@@ -391,10 +394,10 @@ def plot_selected_neurons_activations(
                 if max(neuron_indices) >= len(neuron_activations):
                     raise IndexError(f"Neuron indices {neuron_indices} exceed dimension {len(neuron_activations)}")
                 
-                # 拿到所选神经元的激活值
+                # Get activations for the selected neurons
                 selected_neurons = neuron_activations[neuron_indices].cpu().numpy()
                 
-                # 是否进行 z-score 标准化
+                # Perform z-score standardization if needed
                 if normalize:
                     selected_neurons = z_score_standardize(selected_neurons)
 
@@ -405,13 +408,13 @@ def plot_selected_neurons_activations(
             neuron_labels = [f'D {idx}' for idx in neuron_indices]
             ax = axes[row_idx, col_idx]
 
-            # 绘制热力图
+            # Plot heatmap
             heatmap = sns.heatmap(
                 data_matrix,
                 xticklabels=neuron_labels,
                 yticklabels=layer_labels,
                 cmap='coolwarm',
-                center=0 if normalize else None,  # 若归一化，居中；否则根据数据本身范围
+                center=0 if normalize else None,  # Center heatmap if normalized
                 ax=ax,
                 cbar=True,
                 cbar_kws={
@@ -419,12 +422,12 @@ def plot_selected_neurons_activations(
                     'label': f'Activation {plot_field}'
                 }
             )
-            # 调整色条的字体
+            # Adjust colorbar font size
             cbar = heatmap.collections[0].colorbar
-            cbar.ax.tick_params(labelsize=cbar_fontsize)      # 刻度字体
-            cbar.set_label(f'Activation {plot_field}', size=cbar_fontsize)  # 标签字体
+            cbar.ax.tick_params(labelsize=cbar_fontsize)  # Font size for tick labels
+            cbar.set_label(f'Activation {plot_field}', size=cbar_fontsize)  # Font size for label
 
-            # 设置标题与坐标轴标签
+            # Set titles and axis labels
             ax.set_title(f'{task_type} - {subset_name}', fontsize=fontsize, fontweight='bold', pad=20)
             ax.set_xlabel('Dimensions', fontsize=fontsize, labelpad=10)
             ax.set_ylabel('Layers', fontsize=fontsize, labelpad=10)

@@ -11,17 +11,19 @@ def load_model_and_tokenizer(model_name_or_path: str, device='cuda'):
     Load a model and tokenizer from the specified path.
 
     Args:
-        model_name_or_path (str): Path to the model.
+        model_name_or_path (str): Path to the model or model identifier.
+        device (str): Device to load the model on ('cuda' or 'cpu').
 
     Returns:
-        model, tokenizer: Loaded model and tokenizer.
+        model: Loaded pre-trained model.
+        tokenizer: Loaded tokenizer corresponding to the model.
     """
     model = AutoModelForCausalLM.from_pretrained(
         model_name_or_path, 
-        device_map=device, 
+        device_map=device,  # Automatically decides where to load model layers
         torch_dtype="auto", 
-        trust_remote_code=True, 
-        output_hidden_states=True
+        trust_remote_code=True,  # To trust model code (optional)
+        output_hidden_states=True  # Ensures hidden states are returned
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     return model, tokenizer
@@ -32,23 +34,23 @@ def get_hidden_states(prompt: str, model, tokenizer, device: str = 'cuda') -> np
     Get hidden states for a single prompt without batching or padding.
 
     Args:
-        prompt (str): Text input.
-        model: Loaded model.
-        tokenizer: Loaded tokenizer.
-        device (str): Device to run the model on.
+        prompt (str): Text input for the model.
+        model: Pretrained model (e.g., AutoModelForCausalLM).
+        tokenizer: Pretrained tokenizer.
+        device (str): Device to run the model on, e.g., 'cuda' or 'cpu'.
 
     Returns:
-        np.ndarray: Hidden states for each layer, averaged across sequence length.
+        np.ndarray: Hidden states for each layer, averaged across the sequence length.
     """
     inputs = tokenizer(prompt, return_tensors='pt').to(device)
     with torch.no_grad():
         outputs = model(**inputs, output_hidden_states=True, use_cache=False, return_dict=True)
     
-    # Extract and process hidden states for each layer
-    hidden_states = outputs.hidden_states  # tuple of shape (num_layers, 1, seq_len, hidden_size)
+    # Extract hidden states (tuple of shape (num_layers, 1, seq_len, hidden_size))
+    hidden_states = outputs.hidden_states  
     num_layers = len(hidden_states)
     
-    # Average pool over the sequence length and convert to float32 before moving to numpy array
+    # Average pooling over the sequence length (dim=1) and convert to numpy
     pooled_hidden_states = np.array([
         layer_hidden_state.mean(dim=1).squeeze().to(torch.float32).cpu().numpy()  # shape: (hidden_size,)
         for layer_hidden_state in hidden_states
@@ -56,7 +58,22 @@ def get_hidden_states(prompt: str, model, tokenizer, device: str = 'cuda') -> np
     
     return pooled_hidden_states
 
+
 def collect_hidden_states(inputs: List[str], task_types: List[str], model, tokenizer, device='cuda') -> Tuple[List[np.ndarray], List[str]]:
+    """
+    Collect hidden states for a list of input prompts along with their task types.
+
+    Args:
+        inputs (List[str]): List of input text prompts.
+        task_types (List[str]): List of task types corresponding to each input.
+        model: Pretrained model.
+        tokenizer: Pretrained tokenizer.
+        device (str): Device to run the model on.
+
+    Returns:
+        hidden_states_list: List of hidden states for each input prompt.
+        labels: List of task type labels corresponding to each input.
+    """
     hidden_states_list = []
     labels = []
 
@@ -67,9 +84,16 @@ def collect_hidden_states(inputs: List[str], task_types: List[str], model, token
 
     return hidden_states_list, labels
 
+
 def create_task_type_mapping(task_types: List[str]) -> Dict[str, int]:
     """
-    Given a list of task_types, create a mapping from task_type string to an integer label.
+    Create a mapping from task type string to integer labels.
+
+    Args:
+        task_types (List[str]): List of task type strings.
+
+    Returns:
+        task_type_to_label (Dict[str, int]): Mapping of task type to integer labels.
     """
     task_type_to_label = {}
     label_counter = 0
@@ -79,6 +103,7 @@ def create_task_type_mapping(task_types: List[str]) -> Dict[str, int]:
             label_counter += 1
     return task_type_to_label
 
+
 def get_embeddings(
     inputs: List[str],
     task_types: List[str],
@@ -87,22 +112,21 @@ def get_embeddings(
     device: str = 'cuda'
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, int]]:
     """
-    Compute embeddings for a list of inputs along with their task types.
-    
+    Compute embeddings for a list of input texts along with their task types.
+
     Args:
-        inputs (List[str]): A list of input text strings.
-        task_types (List[str]): A list of corresponding task types, same length as inputs.
-        model: The loaded model with embeddings.
-        tokenizer: The loaded tokenizer.
-        device (str): The device on which to run computations.
-        
+        inputs (List[str]): List of input text strings.
+        task_types (List[str]): List of corresponding task types (labels).
+        model: The pre-trained model used to generate embeddings.
+        tokenizer: The pre-trained tokenizer.
+        device (str): The device for computation ('cuda' or 'cpu').
+
     Returns:
-        Tuple[np.ndarray, np.ndarray, Dict[str, int]]:
-            embeddings: (N, hidden_size) numpy array of embeddings.
-            labels: (N,) numpy array of integer labels corresponding to task_types.
-            task_type_to_label: A dictionary mapping from task_type string to integer label.
+        Tuple containing:
+            - embeddings: A numpy array of shape (N, hidden_size) representing the embeddings for each input.
+            - labels: A numpy array of integer labels corresponding to task types.
+            - task_type_to_label: A dictionary mapping task types to integer labels.
     """
-    # 创建任务类型的标签映射
     task_type_to_label = create_task_type_mapping(task_types)
     
     embeddings = []
@@ -111,23 +135,21 @@ def get_embeddings(
     for inp, ttype in tqdm(zip(inputs, task_types), total=len(inputs), desc="Generating Embeddings", unit="input"):
         label = task_type_to_label[ttype]
         
-        # Tokenize单个输入，不需要填充
+        # Tokenize the input text
         encoded = tokenizer(inp, return_tensors='pt').to(device)
         input_ids = encoded['input_ids']
 
         with torch.no_grad():
             token_embeddings = model.get_input_embeddings()(input_ids)
         
-        # 对序列长度维度求平均，并移至CPU
+        # Average over sequence length (dim=1) to obtain a fixed-size embedding per input
         embedding = token_embeddings.mean(dim=1).float().cpu().numpy()
 
         embeddings.append(embedding)
         labels.append(label)
 
-    # 将嵌入和标签转换为NumPy数组
-    embeddings = np.array(embeddings).squeeze()
+    # Convert lists to numpy arrays
+    embeddings = np.array(embeddings).squeeze()  # Remove unnecessary dimensions
     labels = np.array(labels)
 
     return embeddings, labels, task_type_to_label
-
-

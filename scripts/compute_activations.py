@@ -14,7 +14,7 @@ import argparse
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(project_root)
 
-# 引入我们定义的函数和类
+# Import custom modules
 from src.activations import (
     ActivationHookManager,
     save_activations,
@@ -24,19 +24,22 @@ from src.data_utils import load_datasets, build_few_shot_prompts
 from src.model_utils import load_model_and_tokenizer
 
 def main(args):
-    # 设置随机种子
+    """Main function to compute and save activations for various tasks."""
+    
+    # Set random seed for reproducibility
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    # 构建 model_path / activations_output_dir
+    # Construct model path and output directory for activations
     model_path = os.path.join(args.model_root_path, args.model_name)
     activations_output_dir = os.path.join(args.activations_root_path, args.model_name)
     os.makedirs(activations_output_dir, exist_ok=True)
 
-    # 加载数据
+    # Load datasets for training (or other appropriate splits)
     datasets = load_datasets(args.data_dir, split='train')
 
+    # Build few-shot prompts based on the datasets
     shot_inputs, shot_task_types = build_few_shot_prompts(
         datasets,
         min_shot=args.min_shot,
@@ -45,20 +48,21 @@ def main(args):
         sample_size=args.sample_size, 
         use_corpus=True
     )
-    # 加载模型 / 分词器
+
+    # Load model and tokenizer
     model, tokenizer = load_model_and_tokenizer(model_path)
     model.eval()
 
-    # ===== 一次性地计算并保存权重的 L2 范数 =====
+    # ===== Optionally compute and save the weight L2 norms =====
     if args.save_weight_l2:
         weight_l2_save_path = os.path.join(activations_output_dir, "weight_l2_info.pt")
         compute_and_save_weight_l2(model, weight_l2_save_path)
 
-    # 注册hook（在线统计激活值）
+    # Register activation hooks to collect activations during forward pass
     hook_manager = ActivationHookManager()
     hook_manager.register_activation_hooks(model)
 
-    # 收集并保存激活值
+    # Collect and save activations using the registered hooks
     with torch.no_grad():
         save_activations(
             model=model,
@@ -71,22 +75,31 @@ def main(args):
 
     print("Activations computation and saving completed.")
 
-
 if __name__ == "__main__":
+    # Argument parser for running the script
     parser = argparse.ArgumentParser(description="Compute activations for different tasks using model forward passes.")
-    parser.add_argument("--data_dir", type=str, default="./data/processed", help="Directory of processed data.")
-    parser.add_argument("--model_root_path", type=str, required=True, help="Root directory of models.")
-    parser.add_argument("--model_name", type=str, required=True, help="Model name, used to build full model path.")
-    parser.add_argument("--activations_root_path", type=str, default="./activations", help="Root path for saving activations.")
-    parser.add_argument("--sample_size", type=int, default=200, help="Sample size of tasks to use.")
-    parser.add_argument("--min_shot", type=int, default=0, help="Min shot for few-shot prompts.")
-    parser.add_argument("--max_shot", type=int, default=1, help="Max shot for few-shot prompts.")
-    parser.add_argument("--shot_seed", type=int, default=44, help="Seed for few-shot prompt generation.")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument("--data_dir", type=str, default="./data/processed", 
+                        help="Directory where processed data is located.")
+    parser.add_argument("--model_root_path", type=str, required=True, 
+                        help="Root directory where models are stored.")
+    parser.add_argument("--model_name", type=str, required=True, 
+                        help="Name of the model to load.")
+    parser.add_argument("--activations_root_path", type=str, default="./activations", 
+                        help="Root directory to save activations.")
+    parser.add_argument("--sample_size", type=int, default=200, 
+                        help="Sample size for tasks to use in activation computation.")
+    parser.add_argument("--min_shot", type=int, default=0, 
+                        help="Minimum number of shots for few-shot prompts.")
+    parser.add_argument("--max_shot", type=int, default=1, 
+                        help="Maximum number of shots for few-shot prompts.")
+    parser.add_argument("--shot_seed", type=int, default=44, 
+                        help="Seed for generating few-shot prompts.")
+    parser.add_argument("--seed", type=int, default=42, 
+                        help="Seed for random number generation.")
 
-    # 可选参数，用于决定是否保存权重L2
+    # Optional argument to save weight L2 norms
     parser.add_argument("--save_weight_l2", action='store_true', 
-                        help="Whether to compute and save weight L2 norms once.")
+                        help="If set, compute and save weight L2 norms for the model.")
 
     args = parser.parse_args()
     main(args)

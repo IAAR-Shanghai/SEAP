@@ -1,15 +1,11 @@
-#!/usr/bin/env python3
-# coding: utf-8
+# /src/pruning_utils/apply_pruning.py
+
 """
-/src/pruning_utils/apply_pruning.py
+This file primarily implements the following functions:
+1. compress_layer: Prune or mask a single layer based on the provided attn_mask / mlp_mask.
+2. apply_pruning_to_model: Apply pruning to all layers of the model, calling compress_layer layer by layer. Optionally, bias compensation can be performed using the baseline_inp.
 
-此文件中，我们主要完成：
-1. compress_layer: 针对单层，根据 attn_mask / mlp_mask 做剪枝或mask；
-2. apply_pruning_to_model: 针对全模型多层，逐层调用 compress_layer；并可选结合 baseline_inp 做 bias 补偿。
-
-改进点：在 structured prune 时，如果 bias=True，
-我们会先提取 "待移除" 的行/列对应的权重，乘以 baseline_inp 得到对输出的贡献，再加到 bias 上，
-然后再正式删除相应行/列。这样可以贴近 FLAP 的原生做法。
+Improvement: During structured pruning, if bias=True, we first extract the weights corresponding to the rows/columns to be removed, multiply them by the baseline_inp to compute their contribution to the output, then add that contribution to the bias. Afterward, we formally delete the corresponding rows/columns. This approach closely follows the original FLAP method.
 """
 
 import torch
@@ -28,24 +24,24 @@ def compress_layer(
     head_dim: int = 128
 ):
     """
-    Compress (prune or mask) a single Transformer layer based on provided masks.
+    Compress (prune or mask) a single Transformer layer based on provided masks. 
     Includes robust dtype casting for bias compensation.
 
     Args:
         layer (nn.Module): The layer to compress, with submodules:
             layer.self_attn.q_proj, .k_proj, .v_proj, .o_proj,
             layer.mlp.up_proj, .down_proj, .gate_proj, etc.
-        attn_mask (torch.Tensor): shape=[num_heads], bool or 0/1 mask for attention heads
-        mlp_mask (torch.Tensor): shape=[intermediate_size], bool or 0/1 mask for MLP channels
-        attn_mean_inp (torch.Tensor): baseline input for attention (shape=[hidden_size])
-        mlp_mean_inp (torch.Tensor): baseline input for MLP (shape=[intermediate_size])
-        device: device used for computations
-        bias: whether to do bias compensation
-        unstr: whether to do unstructured (soft) mask or structured pruning
-        head_dim: dimension of each attention head (default=128)
+        attn_mask (torch.Tensor): shape=[num_heads], bool or 0/1 mask for attention heads.
+        mlp_mask (torch.Tensor): shape=[intermediate_size], bool or 0/1 mask for MLP channels.
+        attn_mean_inp (torch.Tensor): baseline input for attention (shape=[hidden_size]).
+        mlp_mean_inp (torch.Tensor): baseline input for MLP (shape=[intermediate_size]).
+        device (Union[str, torch.device]): device used for computations.
+        bias (bool): whether to perform bias compensation.
+        unstr (bool): whether to perform unstructured (soft) masking or structured pruning.
+        head_dim (int): dimension of each attention head (default=128).
 
     Returns:
-        None (in-place modifications)
+        None: Modifies the layer in place.
     """
 
     # ---------------------------------------------------------------------------
@@ -65,7 +61,7 @@ def compress_layer(
 
         # unstructured = True => soft mask
         if unstr:
-            # Only do pruning on q_proj, k_proj, and v_proj if q_proj and k_proj match
+            # Only prune q_proj, k_proj, and v_proj if q_proj and k_proj match
             if qk_match:
                 # Multiply rows in q/k/v
                 q_proj.weight.data *= expanded_attn_mask.unsqueeze(-1).to(device)
@@ -186,17 +182,23 @@ def compress_layer(
     torch.cuda.empty_cache()
 
 
-
 def force_add_bias_if_none(linear_module: nn.Linear, device=None):
     """
-    如果 linear_module.bias is None，就给它添加一个新的 bias Parameter。
+    If the `linear_module.bias` is None, add a new bias parameter initialized to zeros.
+
+    Args:
+        linear_module (nn.Linear): The linear layer to check.
+        device: The device for the new bias parameter.
+    
+    Returns:
+        None: The function adds the bias in place if necessary.
     """
     if linear_module.bias is None:
         out_features = linear_module.weight.size(0)
         weight_dtype = linear_module.weight.dtype
-        # 用 0 初始化新的 bias
+        # Initialize the new bias to zero
         new_bias = nn.Parameter(torch.zeros(out_features, dtype=weight_dtype, device=device))
-        linear_module.bias = new_bias  # 替换原先 None
+        linear_module.bias = new_bias  # Replace the original None with the new bias
         print(f"[force_add_bias_if_none] Added bias param to {linear_module}")
 
 
@@ -212,22 +214,26 @@ def apply_pruning_to_model(
     head_dim: int = 128
 ):
     """
-    对模型的所有层应用剪枝或mask操作。若需bias补偿，则传入 baseline_inps.
+    Apply pruning or masking operations to all layers of the model. If bias compensation is needed, 
+    provide the baseline inputs.
 
     Args:
-        model: 大模型，如 LLaMA / GPT
-        attn_masks: {layer_idx: Tensor([num_heads])}, bool
-        mlp_masks:  {layer_idx: Tensor([intermediate_size])}, bool
-        attn_mean_inps: {layer_idx: Tensor([hidden_size])} or None
-        mlp_mean_inps:  {layer_idx: Tensor([intermediate_size])} or None
-        bias: 是否做bias补偿
-        unstr: 是否只做soft mask
-        head_dim: 每个head多少维
+        model (nn.Module): The model, such as LLaMA or GPT.
+        attn_masks (Dict[int, torch.Tensor]): A dictionary where keys are layer indices, 
+            and values are tensors of shape [num_heads] representing the attention mask.
+        mlp_masks (Dict[int, torch.Tensor]): A dictionary where keys are layer indices,
+            and values are tensors of shape [intermediate_size] representing the MLP mask.
+        attn_mean_inps (Optional[Dict[int, torch.Tensor]]): A dictionary where keys are layer indices, 
+            and values are tensors representing baseline input for attention.
+        mlp_mean_inps (Optional[Dict[int, torch.Tensor]]): A dictionary where keys are layer indices, 
+            and values are tensors representing baseline input for MLP.
+        bias (bool): Whether to perform bias compensation.
+        unstr (bool): Whether to apply only soft masking (unstructured pruning).
+        head_dim (int): The dimension of each attention head (default=128).
 
     Returns:
-        None, in-place修改
+        None: In-place modifications of the model.
     """
-
     for layer_idx, layer in enumerate(model.model.layers):
         a_mask = attn_masks.get(layer_idx, None)
         m_mask = mlp_masks.get(layer_idx, None)
@@ -235,7 +241,7 @@ def apply_pruning_to_model(
         a_mean = attn_mean_inps[layer_idx] if (attn_mean_inps and layer_idx in attn_mean_inps) else None
         m_mean = mlp_mean_inps[layer_idx]  if (mlp_mean_inps and layer_idx in mlp_mean_inps)  else None
 
-        # 如果需要bias补偿，就先检查 o_proj / down_proj 是否有bias，没有则给它加上
+        # If bias compensation is required, check and add bias if necessary.
         if bias:
             # self_attn.o_proj
             force_add_bias_if_none(layer.self_attn.o_proj, device=device)

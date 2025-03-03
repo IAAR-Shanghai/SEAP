@@ -147,14 +147,13 @@ def plot_selected_layers(hidden_states_list, labels, perplexity=50):
     total_layers = len(hidden_states_list[0])
     
     # 中间层选择，排除第0层和最后一层
-    middle_layers = np.linspace(1, total_layers - 2, 10, dtype=int)
+    middle_layers = np.linspace(1, total_layers - 2, 8, dtype=int)
     layers = [0] + list(middle_layers) + [total_layers - 1]  # 包括第0层和最后一层
 
     # 创建网格布局
-    fig = plt.figure(figsize=(24, 8))  # Adjusted figure size for 2 rows and 6 columns
+    fig = plt.figure(figsize=(24, 8))  # Adjusted figure size for 2 rows and 5 columns
     rows = 2  # Two rows for better layout
-    cols = 6  # Six columns for more evenly spaced plots
-    background_color = '#f9f9f9'
+    cols = 5  # Five columns
 
     # 标签编码
     le = LabelEncoder()
@@ -163,7 +162,7 @@ def plot_selected_layers(hidden_states_list, labels, perplexity=50):
     # 绘制每一层的t-SNE
     for idx, layer_idx in enumerate(layers):
         ax = fig.add_subplot(rows, cols, idx + 1)
-        ax.set_facecolor(background_color)
+        ax.set_facecolor('#f9f9f9')
 
         # 提取指定层的隐藏状态
         hidden_states_layer = [h[layer_idx] for h in hidden_states_list]
@@ -186,9 +185,16 @@ def plot_selected_layers(hidden_states_list, labels, perplexity=50):
         for spine in ['top', 'right']:
             ax.spines[spine].set_visible(False)
 
-    # 添加图例，统一在最后添加一次
-    handles, labels_for_legend = ax.get_legend_handles_labels()
-    fig.legend(handles, labels_for_legend, loc='center', fontsize=font_size, ncol=2)
+    # 创建一个单独的subplot用来显示图例
+    ax_legend = fig.add_subplot(rows, cols, 5)  # 选择最右边的位置作为图例
+    ax_legend.axis('off')  # 关闭坐标轴
+
+    # 绘制图例
+    handles = []
+    for j, label in enumerate(unique_labels):
+        handles.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=cmap(j), markersize=10, label=label))
+
+    ax_legend.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.05, 1.05), fontsize=font_size)
 
     # 调整子图间的间距
     plt.subplots_adjust(hspace=0.3, wspace=0.2)  # Adjusted space between subplots

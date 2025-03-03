@@ -34,7 +34,6 @@ def load_task_data(task_path: str) -> Dict[str, pd.DataFrame]:
     
     # Combine train, validation, and test data
     train_df = pd.concat(train_dfs, ignore_index=True) if train_dfs else pd.DataFrame()
-    # 如果有validation数据集则用validation当作test集，如果没有则用test_dfs合并当作test集
     test_df = pd.concat(validation_dfs, ignore_index=True) if validation_dfs else (
         pd.concat(test_dfs, ignore_index=True) if test_dfs else pd.DataFrame())
     return {"train": train_df, "test": test_df}
@@ -266,7 +265,7 @@ def generate_input_prompts(datasets: Dict[str, Dict[str, pd.DataFrame]]) -> Dict
 def format_choices(choices) -> str:
     """
     Formats a list of choices into a lettered multiple-choice format (A, B, C, D).
-
+    
     Args:
         choices (iterable): List of answer choices.
 
@@ -290,8 +289,7 @@ def convert_to_letter(label) -> str:
     if isinstance(label, (int, float)) and not pd.isna(label):
         return chr(65 + int(label))  # Convert numeric to letter
     elif isinstance(label, str) and label.isnumeric():
-        # 假设数字字符串代表0->A,1->B,2->C,3->D
-        return chr(65 + int(label))
+        return chr(65 + int(label))  # Convert numeric string to letter
     return str(label)  # Keep as is if already letter
 
 def save_processed_data(datasets: Dict[str, Dict[str, pd.DataFrame]], output_dir: str):
@@ -322,6 +320,12 @@ def save_processed_data(datasets: Dict[str, Dict[str, pd.DataFrame]], output_dir
             print(f"Saved processed {split_name} data for {dataset_name} to {output_path}")
 
 def main(args):
+    """
+    Main function to preprocess raw datasets and save them in the specified format.
+    
+    Args:
+        args (argparse.Namespace): Command-line arguments containing input and output directories.
+    """
     raw_data_dir = args.raw_data_dir
     processed_data_dir = args.processed_data_dir
 
@@ -329,25 +333,18 @@ def main(args):
     datasets = {}
     for task_name in os.listdir(raw_data_dir):
         task_path = os.path.join(raw_data_dir, task_name)
-        if os.path.isdir(task_path):
-            datasets[task_name] = load_task_data(task_path)
-            print(f"Loaded data for task: {task_name}, train shape: {datasets[task_name]['train'].shape}, test shape: {datasets[task_name]['test'].shape}")
+        datasets[task_name] = load_task_data(task_path)
 
-    # Generate input prompts, label, and gold columns
+    # Generate prompts for datasets
     datasets = generate_input_prompts(datasets)
 
-    # Save processed datasets
+    # Save processed data
     save_processed_data(datasets, processed_data_dir)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare and preprocess raw datasets.")
-    parser.add_argument(
-        "--raw_data_dir", type=str, default="data/raw",
-        help="Directory containing raw task datasets"
-    )
-    parser.add_argument(
-        "--processed_data_dir", type=str, default="data/processed",
-        help="Directory to save processed datasets"
-    )
+    parser = argparse.ArgumentParser(description="Preprocess datasets.")
+    parser.add_argument("--raw_data_dir", required=True, help="Directory containing raw dataset files.")
+    parser.add_argument("--processed_data_dir", required=True, help="Directory to save processed datasets.")
     args = parser.parse_args()
+
     main(args)
