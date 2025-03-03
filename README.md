@@ -101,8 +101,6 @@ These three steps will automatically execute data preparation, model computation
 
 This guide provides a streamlined approach to applying Sparse Expert Activation Pruning (SEAP) to your model.
 
----
-
 ### 1️⃣ Data Preparation  
 
 <details>
@@ -117,8 +115,6 @@ python scripts/data_preparation.py \
 - Converts raw data into a processed format.
 
 </details>
-
----
 
 ### 2️⃣ Compute Activations  
 
@@ -136,8 +132,6 @@ python scripts/compute_activations.py \
 - Extracts model activations to enable pruning.
 
 </details>
-
----
 
 ### 3️⃣ Compute Pruning Masks  
 
@@ -157,8 +151,6 @@ python scripts/compute_masks.py \
 - Generates pruning masks for the model.
 
 </details>
-
----
 
 ### 4️⃣ Apply Pruning  
 
@@ -181,8 +173,6 @@ python scripts/apply_pruning.py \
 
 </details>
 
----
-
 ### 5️⃣ Evaluate Pruned Model  
 
 <details>
@@ -204,7 +194,6 @@ python evaluate_multiple_tasks.py \
 
 </details>
 
----
 
 That's it! You’ve optimized your LLM using SEAP. 🚀
 
