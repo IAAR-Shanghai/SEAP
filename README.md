@@ -12,22 +12,6 @@
     </a>
 </p>
 
-
-<div align="center">
-    <p>
-        Xun Liang<sup>1*</sup>, <a href="https://scholar.google.com/citations?user=TxfCeEYAAAAJ&hl=en">Hanyu Wang</a><sup>1,*</sup>, 
-        <a href="https://scholar.google.com/citations?user=6t4_yXMAAAAJ&hl=en">Shichao Song</a><sup>1,*</sup>, 
-        Huayi Lai<sup>1</sup>, Simin Niu<sup>1</sup>, 
-        Jiawei Yang<sup>1</sup>, Jihao Zhao<sup>1</sup>, <br>
-        Feiyu Xiong<sup>2</sup>, Bo Tang<sup>2</sup>, 
-        Zhiyu Li<sup>2,†</sup>
-    </p>
-    <p>
-        <sup>1</sup><a href="https://en.ruc.edu.cn/">Renmin University of China</a>, 
-        <sup>2</sup><a href="https://www.iaar.ac.cn/">Institute for Advanced Algorithms Research, Shanghai</a>
-    </p>
-</div>
-
 > \[!IMPORTANT\]  
 > 🌟 **If you appreciate our work and are interested in the sparsification of large language models, please give us a star! We truly appreciate your support!**
 
