@@ -3,7 +3,7 @@
 
 <p align="center">
     <!-- arXiv badge with a more vibrant academic red -->
-    <a href="https://arxiv.org/">
+    <a href="https://arxiv.org/abs/2503.07605">
         <img src="https://img.shields.io/badge/arXiv-Paper-B31B1B?style=flat-square&logo=arxiv&logoColor=white">
     </a>
     <!-- Github badge with clean dark color -->
