@@ -270,12 +270,30 @@ def compute_and_save_weight_l2(model, save_path):
     torch.save(weight_l2_info, save_path)
     print(f"Saved weight L2 info to {save_path}")
 
+import os
+import torch
+from collections import defaultdict
 
 def load_weight_l2_info(weight_l2_file):
     """
-    Load the weight L2 norm information for each layer from a specified file.
-    Returns a nested dictionary:
-      {layer_idx: {'o_proj': tensor_of_l2, 'down_proj': tensor_of_l2, ...}, ...}
+    Loads the weight L2 norm information for each layer from a specified file.
+    
+    Args:
+        weight_l2_file (str): Path to the file containing weight L2 norm information.
+    
+    Returns:
+        dict: A nested dictionary structured as:
+            {
+                layer_idx: {
+                    'o_proj': tensor_of_l2,
+                    'down_proj': tensor_of_l2,
+                    ...
+                },
+                ...
+            }
+    
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
     """
     if not os.path.exists(weight_l2_file):
         raise FileNotFoundError(f"Weight L2 info file not found: {weight_l2_file}")
@@ -283,24 +301,100 @@ def load_weight_l2_info(weight_l2_file):
     print(f"Loaded weight L2 info from {weight_l2_file}")
     return weight_l2_data
 
+def collect_and_save_subset_activations(model, tokenizer, hook_manager, shot_inputs, task_types, output_dir):
+    """
+    Collects and saves activation values for a given subset of data and task types.
+    
+    Args:
+        model (torch.nn.Module): The model used to generate activations.
+        tokenizer (transformers.PreTrainedTokenizer): Tokenizer to process input text.
+        hook_manager (ActivationHookManager): Hook manager to collect activations.
+        shot_inputs (list): A list of input prompts.
+        task_types (list): A list of corresponding task types for each input prompt.
+        output_dir (str): Directory path to save the collected activations.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Clear activation statistics to avoid contamination from previous data
+    hook_manager.clear_activations()
+    
+    # Collect and save activations
+    with torch.no_grad():
+        save_activations(
+            model=model,
+            tokenizer=tokenizer,
+            hook_manager=hook_manager,
+            shot_inputs=shot_inputs,
+            task_types=task_types,
+            output_root=output_dir
+        )
 
-def aggregate_task_activations(task_activations):
+def split_dataset_by_task(shot_inputs, task_types):
     """
-    Aggregates activation data for each task by splitting them into 'Subset_1' and 'Subset_2'.
-    You can further process or aggregate the data as needed.
+    Splits the dataset into two subsets based on task types.
+    
+    Args:
+        shot_inputs (list): List of input prompts.
+        task_types (list): List of corresponding task types.
+    
+    Returns:
+        tuple: Four lists containing:
+            - subset1_shot_inputs (list): First subset of input prompts.
+            - subset1_task_types (list): Corresponding task types for subset 1.
+            - subset2_shot_inputs (list): Second subset of input prompts.
+            - subset2_task_types (list): Corresponding task types for subset 2.
     """
-    aggregated_data = {}
-    for ttype, layer_data in task_activations.items():
-        aggregated_data[ttype] = {}
-        aggregated_data[ttype]['Subset_1'] = {}
-        aggregated_data[ttype]['Subset_2'] = {}
-        for layer_idx, module_data in layer_data.items():
-            aggregated_data[ttype]['Subset_1'][layer_idx] = {}
-            aggregated_data[ttype]['Subset_2'][layer_idx] = {}
-            for module_name, stats_dict in module_data.items():
-                aggregated_data[ttype]['Subset_1'][layer_idx][module_name] = stats_dict
-                aggregated_data[ttype]['Subset_2'][layer_idx][module_name] = stats_dict
-    return aggregated_data
+    task_to_samples = defaultdict(list)
+    
+    for ttype, inp in zip(task_types, shot_inputs):
+        task_to_samples[ttype].append(inp)
+    
+    s1_inps, s2_inps = [], []
+    s1_types, s2_types = [], []
+    
+    for task, samples in task_to_samples.items():
+        n = len(samples)
+        split_idx = n // 2
+        
+        s1_inps.extend(samples[:split_idx])
+        s1_types.extend([task] * split_idx)
+        s2_inps.extend(samples[split_idx:])
+        s2_types.extend([task] * (n - split_idx))
+    
+    return s1_inps, s1_types, s2_inps, s2_types
+
+def load_and_merge_subsets(subset1_root, subset2_root, subset1_name='Subset_1', subset2_name='Subset_2'):
+    """
+    Loads activations from two subsets and merges them into a structured dictionary.
+    
+    Args:
+        subset1_root (str): Directory path of the first subset activations.
+        subset2_root (str): Directory path of the second subset activations.
+        subset1_name (str, optional): Name identifier for the first subset. Defaults to 'Subset_1'.
+        subset2_name (str, optional): Name identifier for the second subset. Defaults to 'Subset_2'.
+    
+    Returns:
+        dict: A dictionary with the structure:
+            {
+                task_type: {
+                    subset1_name: activations_for_subset1,
+                    subset2_name: activations_for_subset2
+                },
+                ...
+            }
+    """
+    subset1_acts = load_activations(subset1_root)
+    subset2_acts = load_activations(subset2_root)
+    
+    merged_data = {}
+    
+    for task_type in subset1_acts.keys():
+        merged_data[task_type] = {
+            subset1_name: subset1_acts[task_type],
+            subset2_name: subset2_acts[task_type]
+        }
+    
+    return merged_data
 
 
 def plot_selected_neurons_activations(

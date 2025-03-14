@@ -10,6 +10,8 @@ tmp_eval/
 
 eval_out/
 
+activations_plot/
+
 # Cache and logs
 __pycache__
 src/__pycache__
