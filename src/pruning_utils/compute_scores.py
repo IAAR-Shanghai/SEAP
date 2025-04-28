@@ -1,29 +1,42 @@
-# /src/pruning_utils/compute_scores.py
-
-"""
-This file is responsible for computing the "pruning scores" used for structured pruning from saved activation data (activation_data) and weight statistics (weight_data).
-Only two methods commonly used in FLAP are retained: **WIFV** and **WIFN**.
-
-- **WIFV**: Weighted Input Feature Variance
-- **WIFN**: Weighted Input Feature Norm
-
-Approach:
-For Attention:
-  - WIFV = \sum_{d=1}^{head_dim} (variance_{head,d} * weight_{head,d})
-  - WIFN = mean_{d=1..head_dim}( sqrt(variance_{head,d}) * weight_{head,d} )
-
-For MLP:
-  - WIFV = variance[channel] * weight[channel]
-  - WIFN = sqrt(variance[channel]) * weight[channel]
-  
-Returns aggregated results of shape [num_heads] or [intermediate_size].
-"""
-
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
-# Only these two methods are supported
-SUPPORTED_METHODS = ["WIFV", "WIFN"]
+# ======================== #
+# Scoring Method Registry  #
+# ======================== #
+
+def score_wifv(stats: Dict[str, torch.Tensor], weights: torch.Tensor) -> torch.Tensor:
+    """Weighted Input Feature Variance (WIFV).
+
+    Args:
+        stats: Dictionary containing 'var' and optionally 'l2' activations.
+        weights: Corresponding weight tensor.
+
+    Returns:
+        Tensor with importance scores.
+    """
+    return stats["var"] * weights
+
+
+def score_wifn(stats: Dict[str, torch.Tensor], weights: torch.Tensor) -> torch.Tensor:
+    """Weighted Input Feature Norm (WIFN).
+
+    Args:
+        stats: Dictionary containing 'var' and optionally 'l2' activations.
+        weights: Corresponding weight tensor.
+
+    Returns:
+        Tensor with importance scores.
+    """
+    source = stats["l2"] if stats["l2"] is not None else stats["var"]
+    return torch.sqrt(source) * weights
+
+
+SCORE_METHODS = {
+    "WIFV": score_wifv,
+    "WIFN": score_wifn
+}
+
 
 def compute_attention_head_scores(
     layer_idx: int,
@@ -34,74 +47,42 @@ def compute_attention_head_scores(
     head_dim: int,
     method: str = "WIFV"
 ) -> torch.Tensor:
-    """
-    Compute importance scores for attention heads in a given layer, supporting both WIFV and WIFN methods.
-    Logic:
-      - First, get activation statistics (variance or l2/sqrt(l2)) of shape [hidden_size]
-      - Then, element-wise multiply with weight statistics of shape [hidden_size]
-      - Finally, reshape to [num_heads, head_dim] and aggregate (sum/mean) based on method (WIFV/WIFN)
-      - Return final score of shape [num_heads]
+    """Compute importance scores for attention heads in a given layer.
 
     Args:
-        layer_idx (int): Layer index
-        activation_info (Dict[str, Any]): Activation data for the layer
-        weight_info (Dict[int, Dict[str, torch.Tensor]]): Weight statistics for the layer
-        hidden_size (int): Hidden size dimension
-        num_heads (int): Number of attention heads
-        head_dim (int): Dimension of each head
-        method (str): Method for scoring ("WIFV" or "WIFN")
-    
+        layer_idx: Index of the current transformer layer.
+        activation_info: Dictionary with activation statistics.
+        weight_info: Dictionary with weight statistics for each layer.
+        hidden_size: Total hidden dimension of the model.
+        num_heads: Number of attention heads.
+        head_dim: Dimension of each attention head.
+        method: Scoring method to use ("WIFV" or "WIFN").
+
     Returns:
-        torch.Tensor: Computed attention head scores of shape [num_heads]
+        Tensor of shape [num_heads] with scores for each head.
     """
+    if method not in SCORE_METHODS:
+        raise ValueError(f"Unsupported method: {method}")
 
-    # 1) Get variance or l2 from the activation information
-    post_agg_dict = activation_info["attention_post_aggregation"]
-    var_activations = post_agg_dict.get("var", None)
-    if var_activations is None:
-        raise ValueError(f"[compute_attention_head_scores] 'var' not found for layer={layer_idx}, method={method}")
+    post_agg = activation_info["attention_post_aggregation"]
+    stats = {
+        "var": post_agg.get("var"),
+        "l2": post_agg.get("l2")
+    }
 
-    if var_activations.shape[0] != hidden_size:
-        raise ValueError(
-            f"Layer {layer_idx} shape mismatch: expected {hidden_size}, got {var_activations.shape[0]}"
-        )
-    
-    # Check if l2 activations are present
-    l2_activations = post_agg_dict.get("l2", None)
-    if l2_activations is not None and l2_activations.shape[0] != hidden_size:
-        raise ValueError(
-            f"Layer {layer_idx} l2 shape mismatch: expected {hidden_size}, got {l2_activations.shape[0]}"
-        )
+    if stats["var"] is None or stats["var"].shape[0] != hidden_size:
+        raise ValueError(f"Missing or mismatched 'var' for attention layer {layer_idx}")
 
-    # 2) Retrieve weight information for the layer
-    w_layer_dict = weight_info.get(layer_idx, {})
-    w_o_proj = w_layer_dict.get('o_proj', None)
-    if w_o_proj is None:
-        raise ValueError(f"Method {method} requires weight_info[{layer_idx}]['o_proj'] to exist")
+    if stats["l2"] is not None and stats["l2"].shape[0] != hidden_size:
+        stats["l2"] = None  # fallback to variance
 
-    if w_o_proj.shape[0] != hidden_size:
-        raise ValueError(
-            f"o_proj shape mismatch: expected {hidden_size}, got {w_o_proj.shape[0]}"
-        )
+    weights = weight_info[layer_idx].get("o_proj")
+    if weights is None or weights.shape[0] != hidden_size:
+        raise ValueError(f"Missing or mismatched o_proj weights for layer {layer_idx}")
 
-    # 3) Compute scores based on WIFV / WIFN
-    if method == "WIFV":
-        # WIFV = variance * weight (element-wise multiplication)
-        raw_scores = var_activations * w_o_proj
-    elif method == "WIFN":
-        # WIFN = sqrt(variance) * weight (or sqrt(l2) if l2 is available)
-        if l2_activations is not None:
-            raw_scores = torch.sqrt(l2_activations) * w_o_proj
-        else:
-            raw_scores = torch.sqrt(var_activations) * w_o_proj
-    else:
-        raise NotImplementedError(f"Only WIFV/WIFN are supported, got {method}")
+    raw_scores = SCORE_METHODS[method](stats, weights)
+    return raw_scores.view(num_heads, head_dim).mean(dim=1)
 
-    # 4) Reshape raw scores to [num_heads, head_dim] and calculate mean across head_dim
-    raw_scores_2d = raw_scores.view(num_heads, head_dim)
-    scores = raw_scores_2d.mean(dim=1)  # Mean aggregation
-
-    return scores
 
 def compute_mlp_channel_scores(
     layer_idx: int,
@@ -111,62 +92,43 @@ def compute_mlp_channel_scores(
     intermediate_size: int,
     method: str = "WIFV"
 ) -> torch.Tensor:
-    """
-    Compute importance scores for MLP channels (4*hidden_size) in a given layer (WIFV / WIFN).
-    This corresponds to the "down_proj" projection in MLP.
-
-    Process:
-      1) Retrieve variance or l2
-      2) Retrieve statistics for down_proj weights
-      3) Perform element-wise multiplication and return final scores of shape [intermediate_size]
+    """Compute importance scores for MLP channels.
 
     Args:
-        layer_idx (int): Current layer index
-        activation_info (Dict[str, Any]): Activation data (including var, l2)
-        weight_info (Dict[int, Dict[str, torch.Tensor]]): Weight statistics for the layer
-        hidden_size (int): Hidden size
-        intermediate_size (int): Intermediate size for the MLP
-        method (str): "WIFV" or "WIFN"
-    
+        layer_idx: Index of the current transformer layer.
+        activation_info: Dictionary with MLP activation statistics.
+        weight_info: Dictionary with weight statistics for each layer.
+        hidden_size: Total hidden dimension of the model.
+        intermediate_size: Size of the MLP intermediate representation.
+        method: Scoring method to use ("WIFV" or "WIFN").
+
     Returns:
-        torch.Tensor: Computed MLP channel scores of shape [intermediate_size]
+        Tensor of shape [intermediate_size] with scores for MLP channels.
     """
+    if method not in SCORE_METHODS:
+        raise ValueError(f"Unsupported method: {method}")
+
     mlp_dict = activation_info["mlp_intermediate_states"]
-    var_activations = mlp_dict.get("var", None)
-    if var_activations is None:
-        raise ValueError(f"[compute_mlp_channel_scores] 'var' missing for layer={layer_idx}, method={method}")
+    stats = {
+        "var": mlp_dict.get("var"),
+        "l2": mlp_dict.get("l2")
+    }
 
-    # Handle dimension mismatch by truncating to intermediate_size
-    if var_activations.shape[0] != intermediate_size:
-        var_activations = var_activations[:intermediate_size]
+    if stats["var"] is None:
+        raise ValueError(f"Missing 'var' for MLP layer {layer_idx}")
 
-    l2_activations = mlp_dict.get("l2", None)
-    if l2_activations is not None:
-        l2_activations = l2_activations[:intermediate_size]
+    stats["var"] = stats["var"][:intermediate_size]
+    if stats["l2"] is not None:
+        stats["l2"] = stats["l2"][:intermediate_size]
 
-    # Retrieve down_proj statistics
-    w_layer_dict = weight_info.get(layer_idx, {})
-    w_down_proj = w_layer_dict.get('down_proj', None)
-    if w_down_proj is None:
-        raise ValueError(f"Method {method} requires weight_info[{layer_idx}]['down_proj'] to exist")
+    weights = weight_info[layer_idx].get("down_proj")
+    if weights is None:
+        raise ValueError(f"Missing down_proj weights for layer {layer_idx}")
 
-    if w_down_proj.shape[0] != intermediate_size:
-        w_down_proj = w_down_proj[:intermediate_size]
+    weights = weights[:intermediate_size]
 
-    # Compute scores based on WIFV / WIFN
-    if method == "WIFV":
-        # WIFV = variance * weight
-        scores = var_activations * w_down_proj
-    elif method == "WIFN":
-        # WIFN = sqrt(variance) * weight (or sqrt(l2) if l2 is available)
-        if l2_activations is not None:
-            scores = torch.sqrt(l2_activations) * w_down_proj
-        else:
-            scores = torch.sqrt(var_activations) * w_down_proj
-    else:
-        raise NotImplementedError(f"Only WIFV/WIFN are supported, got {method}")
+    return SCORE_METHODS[method](stats, weights)
 
-    return scores
 
 def compute_layer_scores(
     layer_idx: int,
@@ -177,35 +139,27 @@ def compute_layer_scores(
     head_dim: int,
     intermediate_size: int,
     method: str = "WIFV"
-):
-    """
-    Compute scores for a single layer: attention heads scores and MLP channels scores.
-    Return both attention and MLP scores.
-
-    - attn_scores: shape [num_heads]
-    - mlp_scores: shape [intermediate_size]
-    
-    Later, you can directly apply thresholding (e.g., UL-UM, AL-AM) on these scores.
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Compute both attention and MLP scores for a specific layer.
 
     Args:
-        layer_idx (int): Layer index
-        activation_data (Dict[int, Dict[str, Dict[str, torch.Tensor]]): Activation data
-        weight_data (Dict[int, Dict[str, torch.Tensor]]): Weight data
-        hidden_size (int): Hidden size
-        num_heads (int): Number of attention heads
-        head_dim (int): Dimension of each attention head
-        intermediate_size (int): Intermediate size of MLP
-        method (str): Scoring method ("WIFV" or "WIFN")
-    
+        layer_idx: Layer index.
+        activation_data: Activation statistics for all layers.
+        weight_data: Weight statistics for all layers.
+        hidden_size: Hidden size of the model.
+        num_heads: Number of attention heads.
+        head_dim: Dimension of each attention head.
+        intermediate_size: Size of the MLP intermediate layer.
+        method: Scoring method.
+
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: Attention scores and MLP scores
+        A tuple of attention scores [num_heads] and MLP scores [intermediate_size].
     """
     if layer_idx not in activation_data:
         raise ValueError(f"Missing activation data for layer {layer_idx}")
 
     layer_info = activation_data[layer_idx]
 
-    # 1) Compute attention scores
     attn_scores = compute_attention_head_scores(
         layer_idx=layer_idx,
         activation_info=layer_info,
@@ -216,7 +170,6 @@ def compute_layer_scores(
         method=method
     )
 
-    # 2) Compute MLP channel scores
     mlp_scores = compute_mlp_channel_scores(
         layer_idx=layer_idx,
         activation_info=layer_info,
@@ -228,6 +181,7 @@ def compute_layer_scores(
 
     return attn_scores, mlp_scores
 
+
 def compute_all_layers_scores(
     activation_data: Dict[int, Dict[str, Dict[str, torch.Tensor]]],
     weight_data: Dict[int, Dict[str, torch.Tensor]],
@@ -237,29 +191,26 @@ def compute_all_layers_scores(
     intermediate_size: int,
     method: str = "WIFV"
 ) -> Dict[int, Dict[str, torch.Tensor]]:
-    """
-    Compute the scores for all layers in the model: both attention and MLP scores.
-    Returns a dictionary with scores for each layer.
+    """Compute pruning scores for all layers in the model.
 
     Args:
-        activation_data (Dict[int, Dict[str, Dict[str, torch.Tensor]]): Activation data
-        weight_data (Dict[int, Dict[str, torch.Tensor]]): Weight data
-        num_layers (int): Number of layers
-        hidden_size (int): Hidden size
-        num_heads (int): Number of attention heads
-        intermediate_size (int): Intermediate size of MLP
-        method (str): Scoring method ("WIFV" or "WIFN")
-    
+        activation_data: Activation statistics for all layers.
+        weight_data: Weight statistics for all layers.
+        num_layers: Total number of transformer layers.
+        hidden_size: Model hidden size.
+        num_heads: Number of attention heads.
+        intermediate_size: MLP hidden size.
+        method: Scoring method to apply.
+
     Returns:
-        Dict[int, Dict[str, torch.Tensor]]: Layer-wise scores for attention and MLP
+        Dictionary mapping each layer index to its attention and MLP scores.
     """
-    if method not in SUPPORTED_METHODS:
-        raise ValueError(f"method={method} not in supported list: {SUPPORTED_METHODS}")
+    if method not in SCORE_METHODS:
+        raise ValueError(f"Method '{method}' not supported. Supported: {list(SCORE_METHODS.keys())}")
 
     head_dim = hidden_size // num_heads
     scores_dict = {}
 
-    # Loop over each layer and compute scores
     for layer_idx in range(num_layers):
         if layer_idx not in activation_data:
             raise ValueError(f"Missing activation data for layer={layer_idx}")
@@ -276,7 +227,7 @@ def compute_all_layers_scores(
         )
         scores_dict[layer_idx] = {
             "attn_scores": attn_scores,
-            "mlp_scores":  mlp_scores
+            "mlp_scores": mlp_scores
         }
 
     return scores_dict

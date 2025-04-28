@@ -77,7 +77,7 @@ def collect_hidden_states(inputs: List[str], task_types: List[str], model, token
     hidden_states_list = []
     labels = []
 
-    for inp, ttype in tqdm(zip(inputs, task_types), total=len(inputs), desc="Collecting Hidden States"):
+    for inp, ttype in zip(inputs, task_types):
         hidden_states = get_hidden_states(inp, model, tokenizer, device)
         hidden_states_list.append(hidden_states)
         labels.append(ttype)

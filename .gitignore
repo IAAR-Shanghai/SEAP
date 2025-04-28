@@ -1,3 +1,5 @@
+data/
+
 activations/
 
 pruning_masks/
@@ -9,6 +11,8 @@ examples/
 tmp_eval/
 
 eval_out/
+
+tmp/
 
 activations_plot/
 

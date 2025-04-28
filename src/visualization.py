@@ -133,72 +133,120 @@ def plot_tsne_layers(hidden_states_list, labels, perplexity=50, n_components=2, 
 
     plt.show()
 
+def plot_selected_layers(
+        hidden_states_list,
+        labels,
+        perplexity=50,
+        unique_labels=None,
+):
+    """
+    绘制选定层的 t-SNE 可视化，按任务类别分组色系。
+    可通过 unique_labels 控制展示哪些任务。
+    """
+    if unique_labels is None:
+        unique_labels = sorted(list(set(labels)))
+    else:
+        unique_labels = sorted(unique_labels)
 
-def plot_selected_layers(hidden_states_list, labels, perplexity=50):
-    """
-    绘制选定层的 t-SNE 可视化。第一张为第0层，最后一张为最后一层，其他的10张均匀分布在中间层之间。
-    所有的图都是2D t-SNE。
-    """
-    unique_labels = ['winogrande', 'hellaswag', 'piqa', 'gsm8k', 'ai2_arc', 'obqa', 'boolq']
-    cmap = plt.cm.get_cmap('Set2', len(unique_labels))
+    # === 定义任务分组 ===
+    task_groups = {
+        "commonsense": ["hellaswag", "winogrande", "piqa", "boolq"],
+        "knowledge_qa": ["arc_c", "arc_e", "obqa"],
+        "language_model": ["c4", "wikitext2"],
+        "code_gen": ["humaneval", "mbpp"],
+        "math_reasoning": ["math_qa", "gsm8k"]
+    }
+
+    group_colormaps = {
+        "commonsense": plt.cm.Blues,
+        "knowledge_qa": plt.cm.Purples,
+        "language_model": plt.cm.Greens,
+        "code_gen": plt.cm.Greys,
+        "math_reasoning": plt.cm.Oranges,
+    }
+
+    label_to_group = {label: group for group, labels in task_groups.items() for label in labels}
+    group_order = list(task_groups.keys())
+
+    # 仅保留在 unique_labels 中的
+    group_label_list = [label for group in group_order for label in task_groups[group] if label in unique_labels]
+
+    def get_label_color(label):
+        group = label_to_group.get(label, "misc")
+        cmap = group_colormaps.get(group, plt.cm.Greys)
+        idx_in_group = task_groups[group].index(label)
+        n_in_group = len(task_groups[group])
+        return cmap((idx_in_group + 1) / (n_in_group + 1))
+
+    label_colors = {label: get_label_color(label) for label in group_label_list}
+
     point_size = 150
-    font_size = 20
+    font_size = 18
 
     total_layers = len(hidden_states_list[0])
-    
-    # 中间层选择，排除第0层和最后一层
     middle_layers = np.linspace(1, total_layers - 2, 8, dtype=int)
-    layers = [0] + list(middle_layers) + [total_layers - 1]  # 包括第0层和最后一层
+    layers = [0] + list(middle_layers) + [total_layers - 1]
 
-    # 创建网格布局
-    fig = plt.figure(figsize=(24, 8))  # Adjusted figure size for 2 rows and 5 columns
-    rows = 2  # Two rows for better layout
-    cols = 5  # Five columns
+    fig = plt.figure(figsize=(22, 9))
+    rows, cols = 2, 5
 
-    # 标签编码
+    # === 过滤样本 ===
+    filtered_idxs = [i for i, l in enumerate(labels) if l in unique_labels]
+    filtered_hidden_states = [hidden_states_list[i] for i in filtered_idxs]
+    filtered_labels = [labels[i] for i in filtered_idxs]
+
     le = LabelEncoder()
-    labels_encoded = le.fit_transform(labels)
+    labels_encoded = le.fit_transform(filtered_labels)
 
-    # 绘制每一层的t-SNE
     for idx, layer_idx in enumerate(layers):
         ax = fig.add_subplot(rows, cols, idx + 1)
         ax.set_facecolor('#f9f9f9')
 
-        # 提取指定层的隐藏状态
-        hidden_states_layer = [h[layer_idx] for h in hidden_states_list]
+        hidden_states_layer = [h[layer_idx] for h in filtered_hidden_states]
         hidden_states_array = np.array(hidden_states_layer)
 
-        if hidden_states_array.ndim == 2:
+        if hidden_states_array.ndim == 2 and len(hidden_states_array) > perplexity:
             tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
             hidden_states_tsne = tsne.fit_transform(hidden_states_array)
-            for j, label in enumerate(unique_labels):
-                idx = [k for k, l in enumerate(labels) if l == label]
-                ax.scatter(hidden_states_tsne[idx, 0], hidden_states_tsne[idx, 1],
-                           label=label, color=cmap(j), s=point_size, alpha=0.1)
+
+            for label in group_label_list:
+                idxs = [k for k, l in enumerate(filtered_labels) if l == label]
+                if not idxs:
+                    continue
+                ax.scatter(
+                    hidden_states_tsne[idxs, 0], hidden_states_tsne[idxs, 1],
+                    label=label,
+                    color=label_colors[label],
+                    s=point_size,
+                    alpha=0.12
+                )
+
             ax.set_title(f'Layer {layer_idx}', fontsize=font_size)
             ax.tick_params(axis='both', which='major', labelsize=font_size - 2)
             ax.grid(True, linestyle='--', linewidth=0.5, color='lightgrey')
         else:
-            print(f"Layer {layer_idx} has unexpected shape.")
+            ax.set_title(f"Layer {layer_idx} (skipped)", fontsize=font_size)
+            print(f"⚠️ Layer {layer_idx} skipped due to invalid shape or low sample size.")
 
-        # 移除外边框
         for spine in ['top', 'right']:
             ax.spines[spine].set_visible(False)
 
-    # 创建一个单独的subplot用来显示图例
-    ax_legend = fig.add_subplot(rows, cols, 5)  # 选择最右边的位置作为图例
-    ax_legend.axis('off')  # 关闭坐标轴
+    # 图例
+    handles = [
+        plt.Line2D([0], [0], marker='o', color='w',
+                   markerfacecolor=label_colors[label], markersize=10, label=label)
+        for label in group_label_list if label in filtered_labels
+    ]
 
-    # 绘制图例
-    handles = []
-    for j, label in enumerate(unique_labels):
-        handles.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=cmap(j), markersize=10, label=label))
+    fig.legend(
+        handles=handles,
+        loc='center left',
+        bbox_to_anchor=(1.02, 0.5),
+        fontsize=font_size,
+        frameon=False
+    )
 
-    ax_legend.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.05, 1.05), fontsize=font_size)
-
-    # 调整子图间的间距
-    plt.subplots_adjust(hspace=0.3, wspace=0.2)  # Adjusted space between subplots
-
+    plt.subplots_adjust(hspace=0.3, wspace=0.3, right=0.85)
     plt.tight_layout()
     plt.show()
 
