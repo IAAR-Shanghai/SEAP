@@ -195,7 +195,7 @@ def capture_activations(model, tokenizer, hook_manager, shot_inputs, task_types)
         for ttype, prompts in task_to_prompts.items():
             hook_manager.clear_activations()
             for prompt in tqdm(prompts, desc=f"Processing {ttype}", unit="prompt"):
-                inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+                inputs = tokenizer(prompt, return_tensors='pt').to("cuda")
                 _ = model(**inputs)
                 del inputs
                 torch.cuda.empty_cache()

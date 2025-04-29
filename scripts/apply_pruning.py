@@ -26,12 +26,15 @@ def main(args):
     head_dim = hidden_size // num_heads
     print(f"[apply_pruning] Computed head_dim={head_dim} (hidden_size={hidden_size}, num_heads={num_heads})")
 
+    use_softmask = not args.hardmask
+
     for idx, task_type in enumerate(args.tasks):
         print(f"\n[apply_pruning] === Task: {task_type} ===")
 
         mask_path = os.path.join(
-            args.masks_root_dir, args.model_name,
-            f"task={task_type}_method={args.method}_strategy={args.sparsity_strategy}_ratio={args.pruning_ratio}",
+            args.masks_root_dir,
+            args.model_name,
+            f"prompt={args.prompt_type}_task={task_type}_method={args.method}_strategy={args.sparsity_strategy}_ratio={args.pruning_ratio}",
             f"{task_type}_masks.pt"
         )
 
@@ -47,19 +50,18 @@ def main(args):
             model=model,
             attn_masks=attn_masks,
             mlp_masks=mlp_masks,
-            device="cuda",
-            unstr=args.softmask,
+            unstr=use_softmask,
             head_dim=head_dim
         )
 
         # Save pruned model
         save_dir = os.path.join(
             args.output_dir,
-            f"{args.model_name}_pruned_{task_type}_method={args.method}_strategy={args.sparsity_strategy}_ratio={args.pruning_ratio}"
+            f"{args.model_name}_pruned_prompt={args.prompt_type}_task={task_type}_method={args.method}_strategy={args.sparsity_strategy}_ratio={args.pruning_ratio}"
         )
         os.makedirs(save_dir, exist_ok=True)
 
-        if args.softmask:
+        if use_softmask:
             model.save_pretrained(save_dir)
         else:
             torch.save(model, f"{save_dir}/pruned_model.pt")
@@ -67,7 +69,7 @@ def main(args):
         tokenizer.save_pretrained(save_dir)
         print(f"[apply_pruning] Saved pruned model to {save_dir}")
 
-        # Reload original model if needed
+        # Reload original model if multiple tasks
         if len(args.tasks) > 1 and idx < len(args.tasks) - 1:
             print("[apply_pruning] Reloading original model for next task.")
             del model
@@ -86,15 +88,18 @@ if __name__ == "__main__":
     parser.add_argument("--masks_root_dir", type=str, default="./pruning_masks")
     parser.add_argument("--tasks", nargs='+', required=True,
                         help="List of tasks to prune on, e.g., gsm8k hellaswag")
+    parser.add_argument("--prompt_type", type=str, required=True,
+                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge"],
+                        help="Prompt type used to generate activations and masks.")
     parser.add_argument("--output_dir", type=str, default="./pruned_models")
 
     parser.add_argument("--method", type=str, default="WIFV", choices=["WIFV", "WIFN"])
-    parser.add_argument("--sparsity_strategy", type=str, required=True,
-                        choices=["uniform", "logistic", "global"],
-                        help="Must match strategy used when generating masks.")
-    parser.add_argument("--pruning_ratio", type=float, required=True)
+    parser.add_argument("--sparsity_strategy", type=str, default="logistic",
+                        choices=["uniform", "logistic", "global"])
+    parser.add_argument("--pruning_ratio", type=float, default=0.2)
 
-    parser.add_argument("--softmask", action="store_true", help="Use softmask (unstructured masking).")
+    parser.add_argument("--hardmask", action="store_true",
+                        help="Use hardmask (structured pruning). Default is softmask (unstructured).")
 
     args = parser.parse_args()
     main(args)

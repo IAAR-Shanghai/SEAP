@@ -1,8 +1,8 @@
-torch 2.5.1
 transformers
 accelerate
 pandas
 matplotlib
+seaborn
 Scikit-learn
 pyarrow
 flash-attn

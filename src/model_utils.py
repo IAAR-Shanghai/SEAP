@@ -1,12 +1,12 @@
 # src/model_utils.py
 
-import torch
+# import torch
 import numpy as np
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import List, Tuple, Dict, Any
 
-def load_model_and_tokenizer(model_name_or_path: str, device='cuda'):
+def load_model_and_tokenizer(model_name_or_path: str, device='auto'):
     """
     Load a model and tokenizer from the specified path.
 
@@ -26,6 +26,7 @@ def load_model_and_tokenizer(model_name_or_path: str, device='cuda'):
         output_hidden_states=True  # Ensures hidden states are returned
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    model.eval()
     return model, tokenizer
 
 
