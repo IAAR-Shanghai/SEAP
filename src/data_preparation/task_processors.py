@@ -36,9 +36,9 @@ def process_gsm8k(df: pd.DataFrame) -> pd.DataFrame:
     df['label'] = ''
     df['gold'] = df['answer']
     df['rationale'] = ''
-    df['corpus'] = df['question'] + " " + df['answer']
+    df['corpus'] = df['question'] + "\n" + df['answer']
     df['task_type'] = 'gsm8k'
-    df['task_format'] = 'free_form'
+    df['task_format'] = 'generative'
     df['knowledge'] = ''
     return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
 
@@ -163,7 +163,7 @@ def process_winogrande(df: pd.DataFrame) -> pd.DataFrame:
     df['question'] = df.apply(lambda row: f"{row['sentence']}\nOptions:\nA) {row['option1']}\nB) {row['option2']}", axis=1)
     df['label'] = df['answer'].apply(lambda x: 'A' if x == '1' else 'B')
     df['gold'] = df.apply(lambda r: r['option1'] if r['answer'] == '1' else r['option2'], axis=1)
-    df['corpus'] = df['sentence'].str.replace('_', '') + " " + df['gold']
+    df['corpus'] = df.apply(lambda r: r['sentence'].replace('_', r['gold']), axis=1)
     df['rationale'] = ''
     df['task_type'] = 'winogrande'
     df['task_format'] = 'multiple_choice'
@@ -171,10 +171,10 @@ def process_winogrande(df: pd.DataFrame) -> pd.DataFrame:
     return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
 
 def process_boolq(df: pd.DataFrame) -> pd.DataFrame:
-    df['question'] = df.apply(lambda row: f"{row['question'].capitalize()}\nPassage:\n{row['passage']}", axis=1)
+    df['question'] = df.apply(lambda row: f"{row['passage']}\n{row['question'].capitalize()}?", axis=1)
     df['label'] = df['answer'].apply(lambda x: 'Yes' if x else 'No')
     df['gold'] = ''
-    df['corpus'] = df.apply(lambda r: f"{r['passage']} {r['question'].capitalize()}? {r['label']}", axis=1)
+    df['corpus'] = df.apply(lambda r: f"{r['question']} {r['label']}", axis=1)
     df['rationale'] = ""
     df['task_type'] = 'boolq'
     df['task_format'] = 'multiple_choice'
@@ -182,7 +182,6 @@ def process_boolq(df: pd.DataFrame) -> pd.DataFrame:
     return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
 
 def process_humaneval(df: pd.DataFrame) -> pd.DataFrame:
-    # 构造引导性 question
     df['question'] = df['entry_point'].apply(
         lambda name: f"Implement the function `{name}` as specified below:\n\n"
     ) + df['prompt']

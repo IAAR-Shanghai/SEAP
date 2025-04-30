@@ -9,19 +9,23 @@ def build_answer(row: dict) -> str:
     return f"{label}) {gold}" if label and gold and isinstance(label, str) else str(label or gold)
 
 def build_zero_shot_prompt(row: dict) -> str:
+    answer = build_answer(row)
+
     if row["task_format"] == "language_modeling":
-        return row["question"]
+        return f"{row['question']}"
+
     elif row["task_format"] == "generative":
-        return f"# Task:\n{row['question']}\n\n# Solution:"
+        return f"# Task:\n{row['question']}\n\n# Solution:\n{answer}"
+
     else:
-        return f"Question: {row['question']}\nAnswer:"
+        return f"Question: {row['question']}\nAnswer: {answer}"
 
 def build_cot_prompt(row: dict) -> str:
     rationale = row.get("rationale", "").strip()
     if row["task_format"] == "language_modeling":
         return row["question"]
     elif row["task_format"] == "generative":
-        return f"# Task:\n{row['question']}\n\n# Let's think step by step.\n{rationale}\n# Final code:"
+        return f"# Task:\n{row['question']}\n\n# Let's think step by step.\n{rationale}\n# Final Answer:"
     elif rationale:
         return f"Question: {row['question']}\nAnswer: Let's think step by step.\n{rationale}"
     else:
@@ -48,7 +52,7 @@ def build_icl_examples(
 
         if task_format == "generative":
             if use_cot and rationale:
-                shots.append(f"# Task:\n{q}\n\n# Let's think step by step.\n{rationale}\n# Final code:\n{answer}")
+                shots.append(f"# Task:\n{q}\n\n# Let's think step by step.\n{rationale}\n# Final Answer:\n{answer}")
             else:
                 shots.append(f"# Task:\n{q}\n\n# Solution:\n{answer}")
         elif task_format == "language_modeling":

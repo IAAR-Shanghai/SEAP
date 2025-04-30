@@ -18,7 +18,7 @@ def main(args):
     model_path = os.path.join(args.model_root_path, args.model_name)
     print(f"[apply_pruning] Loading model from {model_path}")
     model, tokenizer = load_model_and_tokenizer(model_path)
-    model.eval().to("cuda")
+    model.eval()
 
     # Compute head_dim
     hidden_size = model.config.hidden_size
