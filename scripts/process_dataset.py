@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import os
+import re
 import sys
 import argparse
 import pandas as pd
@@ -44,6 +45,20 @@ def build_base_dataset(raw_data_dir, sample_size, seed, tasks):
         task_path = os.path.join(raw_data_dir, task_name)
         if os.path.isdir(task_path):
             datasets[task_name] = load_task_data(task_path)
+    
+    task_type_map = {
+        "gsm8k": "gsm8k",
+        "math_qa": "mathqa",
+        "arc_e": "arc_easy",
+        "arc_c": "arc_challenge",
+        "obqa": "openbookqa",
+        "winogrande": "winogrande",
+        "piqa": "piqa",
+        "hellaswag": "hellaswag",
+        "boolq": "boolq",
+        "wikitext2": "wikitext2",
+        "c4": "c4"
+    }
 
     all_data = []
     for task_name, splits in datasets.items():
@@ -63,14 +78,24 @@ def build_base_dataset(raw_data_dir, sample_size, seed, tasks):
                 df = df.sample(n=sample_size, random_state=seed).reset_index(drop=True)
 
             processed = processor(df).copy()
-            processed["task_type"] = task_name
+            processed["task_type"] = task_type_map.get(task_name, task_name)
             processed["split"] = split_name
             all_data.append(processed)
 
     return pd.concat(all_data, ignore_index=True)
 
-
 def generate_column(df, column, dry_run, temperature, max_tokens, force, args):
+    def clean_output(text: str, column: str) -> str:
+        if not isinstance(text, str):
+            return text
+        if column == "rationale":
+            return re.sub(r"Explanation\s*(\(.*?\))?:?", "", text, flags=re.IGNORECASE).strip()
+        elif column == "knowledge":
+            text = re.sub(r"Knowledge\s+Statement\s*(\(.*?\))?:?", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"Demo\s*(\(.*?\))?:?", "", text, flags=re.IGNORECASE)
+            return text.strip()
+        return text.strip()
+
     def generate_single(i, row):
         try:
             if not force and pd.notna(row[column]) and not str(row[column]).startswith("[BAD]"):
@@ -88,7 +113,8 @@ def generate_column(df, column, dry_run, temperature, max_tokens, force, args):
                 api_key=args.api_key,
                 base_url=args.api_base_url
             )
-            return i, result
+            cleaned = clean_output(result, column)
+            return i, cleaned
         except Exception as e:
             print(f"❌ Error on row {i}: {e}")
             return i, "[BAD] Exception occurred"
@@ -124,6 +150,10 @@ def main(args):
         print("📥 Loading existing dataset...")
         df = pd.read_parquet(args.output_path)
 
+    if args.subset_split:
+        print(f"📊 Filtering to split: {args.subset_split}")
+        df = df[df["split"] == args.subset_split].reset_index(drop=True)
+
     if args.generate_rationale:
         print("✏️ Generating rationale column...")
         generate_column(
@@ -154,24 +184,26 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw_data_dir", type=str, required=True)
     parser.add_argument("--output_path", type=str, required=True)
-    parser.add_argument("--sample_size", type=int, default=512)
+    parser.add_argument("--sample_size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--num_workers", type=int, default=16)
-
+    parser.add_argument("--subset_split", type=str, choices=["train", "test"], default=None,
+                    help="Only process the specified split (train or test). If not set, process all.")
+    
     parser.add_argument("--generate_base", action="store_true")
     parser.add_argument("--generate_rationale", action="store_true")
     parser.add_argument("--generate_knowledge", action="store_true")
     parser.add_argument("--build_prompts", action="store_true")
     parser.add_argument("--overwrite_column", nargs="*", default=[])
 
-    parser.add_argument("--api_key", type=str, default=os.getenv("OPENAI_API_KEY"))
+    parser.add_argument("--api_key", type=str, default=os.getenv("OPENAI_API_KEY", "sk-K3it6a5VKQ2FA7hOcLVTksMgdjWUG8Do9eE7WZ5tAYDlhFlo"))
     parser.add_argument("--api_base_url", type=str, default=os.getenv("OPENAI_BASE_URL", "https://api.claudeplus.top/v1"))
+    parser.add_argument("--num_workers", type=int, default=16)
 
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--max_tokens", type=int, default=512)
-    parser.add_argument("--min_shot", type=int, default=3)
-    parser.add_argument("--max_shot", type=int, default=5)
+    parser.add_argument("--min_shot", type=int, default=1)
+    parser.add_argument("--max_shot", type=int, default=3)
     parser.add_argument("--tasks", nargs="+", default=None)
 
     args = parser.parse_args()

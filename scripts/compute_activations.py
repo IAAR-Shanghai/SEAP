@@ -58,8 +58,10 @@ def main(args):
     if "split" in df.columns:
         df = df[df["split"] == "train"]
 
-    if args.sample_size and len(df) > args.sample_size:
-        df = df.sample(n=args.sample_size, random_state=args.seed).reset_index(drop=True)
+    if args.sample_size:
+        df = df.groupby("task_type", group_keys=False).apply(
+            lambda x: x.sample(n=min(len(x), args.sample_size), random_state=args.seed)
+        ).reset_index(drop=True)
 
     for prompt_type in args.prompt_types:
         print(f"\n🚀 Processing prompt_type: {prompt_type}")
@@ -77,6 +79,7 @@ def main(args):
         hook_manager.register_activation_hooks(model)
 
         print(f"[compute_activations] Capturing activations for prompt_type={prompt_type} ...")
+        print(len(shot_inputs))
         captured_acts = capture_activations(
             model=model,
             tokenizer=tokenizer,
@@ -97,7 +100,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute and save activations from model forward passes.")
     parser.add_argument("--model_root_path", type=str, required=True)
     parser.add_argument("--model_name", type=str, required=True)
-    parser.add_argument("--data_path", type=str, default="./data/processed/final_with_prompts.parquet")
+    parser.add_argument("--data_path", type=str, default="./data/processed/prompts.parquet")
     parser.add_argument("--activations_root_path", type=str, default="./activations")
     parser.add_argument("--prompt_types", nargs="+", required=True,
                         choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge"],

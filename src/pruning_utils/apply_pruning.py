@@ -87,7 +87,7 @@ def apply_pruning_to_model(
     model: nn.Module,
     attn_masks: Dict[int, torch.Tensor],
     mlp_masks: Dict[int, torch.Tensor],
-    unstr: bool = False,
+    unstr: bool = True,
     head_dim: int = 128,
 ):
     """
@@ -97,7 +97,7 @@ def apply_pruning_to_model(
         model (nn.Module): Transformer 模型，要求 model.model.layers 能拿到所有层。
         attn_masks (Dict[int, torch.Tensor]): 每层对应的 attention mask。
         mlp_masks (Dict[int, torch.Tensor]): 每层对应的 mlp hidden mask。
-        unstr (bool): 是否用 unstructured masking（默认为硬剪枝）。
+        unstr (bool): 是否用 unstructured masking（默认为软剪枝）。
         head_dim (int): 每个 attention head 的特征维度，默认128。
     """
     layers = model.model.layers
