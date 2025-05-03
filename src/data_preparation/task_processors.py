@@ -32,7 +32,8 @@ def convert_to_letter(label) -> str:
     return str(label)
 
 def process_gsm8k(df: pd.DataFrame) -> pd.DataFrame:
-    df['question'] = df['question']
+    df['question'] = df.apply(
+        lambda row: f"Question: {row['question']}", axis=1)
     df['label'] = ''
     df['gold'] = df['answer']
     df['rationale'] = ''
@@ -46,11 +47,11 @@ def process_gsm8k(df: pd.DataFrame) -> pd.DataFrame:
 def process_math_qa(df: pd.DataFrame) -> pd.DataFrame:
     def parse_options(option_str):
         pattern = r"[a-eA-E]\s*\)\s*(.*?)(?=\s*[a-eA-E]\s*\)|$)"
-        return [opt.strip(" ,") for opt in re.findall(pattern, option_str)]
-
+        return [opt.strip(" ,") for opt in re.findall(pattern, option_str) if opt.strip(" ,")]
+    
     df['choices'] = df['options'].apply(parse_options)
     df['question'] = df.apply(
-        lambda row: f"{row['Problem']}\nOptions:\n{format_choices(row['choices'])}", axis=1)
+        lambda row: f"Question: {row['Problem']}\nOptions:\n{format_choices(row['choices'])}", axis=1)
     
     df['label'] = df['correct'].apply(lambda x: x.upper() if isinstance(x, str) else "")
 
@@ -62,7 +63,7 @@ def process_math_qa(df: pd.DataFrame) -> pd.DataFrame:
             return ""
 
     df['gold'] = df.apply(get_gold, axis=1)
-    df['corpus'] = df['Problem'] + " " + df['gold']
+    df['corpus'] = df['Problem'] + " " + df['Rationale']
     df['rationale'] = df.get('Rationale', "").fillna("")
     df['task_type'] = 'math_qa'
     df['task_format'] = 'multiple_choice'
@@ -72,7 +73,7 @@ def process_math_qa(df: pd.DataFrame) -> pd.DataFrame:
 def process_arc_e(df: pd.DataFrame) -> pd.DataFrame:
     mapping = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
     df['raw_question'] = df['question']
-    df['question'] = df.apply(lambda row: f"{row['raw_question']}\nOptions:\n{format_choices(row['choices']['text'])}", axis=1)
+    df['question'] = df.apply(lambda row: f"Question: {row['raw_question']}\nOptions:\n{format_choices(row['choices']['text'])}", axis=1)
 
     def get_label_and_gold(r):
         ak = r['answerKey']
@@ -100,7 +101,7 @@ def process_arc_e(df: pd.DataFrame) -> pd.DataFrame:
 def process_arc_c(df: pd.DataFrame) -> pd.DataFrame:
     mapping = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
     df['raw_question'] = df['question']
-    df['question'] = df.apply(lambda row: f"{row['raw_question']}\nOptions:\n{format_choices(row['choices']['text'])}", axis=1)
+    df['question'] = df.apply(lambda row: f"Question: {row['raw_question']}\nOptions:\n{format_choices(row['choices']['text'])}", axis=1)
 
     def get_label_and_gold(r):
         ak = r['answerKey']
@@ -126,7 +127,7 @@ def process_arc_c(df: pd.DataFrame) -> pd.DataFrame:
     return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
 
 def process_obqa(df: pd.DataFrame) -> pd.DataFrame:
-    df['question'] = df.apply(lambda row: f"{row['question_stem']}\nOptions:\n{format_choices(row['choices']['text'])}", axis=1)
+    df['question'] = df.apply(lambda row: f"Question: {row['question_stem']}\nOptions:\n{format_choices(row['choices']['text'])}", axis=1)
     df[['label', 'gold']] = df.apply(lambda r: pd.Series([r['answerKey'], r['choices']['text'][ord(r['answerKey']) - ord('A')]]), axis=1)
     df['corpus'] = df['fact1'].str.capitalize() + ". " + df['question_stem'] + " " + df['gold']
     df['rationale'] = ''
@@ -137,7 +138,7 @@ def process_obqa(df: pd.DataFrame) -> pd.DataFrame:
 
 def process_piqa(df: pd.DataFrame) -> pd.DataFrame:
     original_label = df['label'].copy()
-    df['question'] = df.apply(lambda row: f"{row['goal']}\nOptions:\nA) {row['sol1']}\nB) {row['sol2']}", axis=1)
+    df['question'] = df.apply(lambda row: f"Question: {row['goal']}\nOptions:\nA) {row['sol1']}\nB) {row['sol2']}", axis=1)
     df['label'] = original_label.apply(lambda x: 'A' if x == 0 else 'B')
     df['gold'] = df.apply(lambda r: r['sol1'] if original_label.loc[r.name] == 0 else r['sol2'], axis=1)
     df['corpus'] = df['goal'] + " " + df['gold'].str.capitalize()
@@ -149,7 +150,7 @@ def process_piqa(df: pd.DataFrame) -> pd.DataFrame:
 
 def process_hellaswag(df: pd.DataFrame) -> pd.DataFrame:
     original_label = df['label'].copy()
-    df['question'] = df.apply(lambda row: f"{row['ctx']}\nOptions:\n{format_choices(row['endings'])}", axis=1)
+    df['question'] = df.apply(lambda row: f"Question: {row['ctx']}\nOptions:\n{format_choices(row['endings'])}", axis=1)
     df['label'] = original_label.apply(lambda x: convert_to_letter(x))
     df['gold'] = df.apply(lambda r: r['endings'][int(original_label.loc[r.name])], axis=1)
     df['corpus'] = df['ctx'] + " " + df['gold']
@@ -160,7 +161,7 @@ def process_hellaswag(df: pd.DataFrame) -> pd.DataFrame:
     return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
 
 def process_winogrande(df: pd.DataFrame) -> pd.DataFrame:
-    df['question'] = df.apply(lambda row: f"{row['sentence']}\nOptions:\nA) {row['option1']}\nB) {row['option2']}", axis=1)
+    df['question'] = df.apply(lambda row: f"Question: {row['sentence']}\nOptions:\nA) {row['option1']}\nB) {row['option2']}", axis=1)
     df['label'] = df['answer'].apply(lambda x: 'A' if x == '1' else 'B')
     df['gold'] = df.apply(lambda r: r['option1'] if r['answer'] == '1' else r['option2'], axis=1)
     df['corpus'] = df.apply(lambda r: r['sentence'].replace('_', r['gold']), axis=1)
@@ -171,7 +172,7 @@ def process_winogrande(df: pd.DataFrame) -> pd.DataFrame:
     return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
 
 def process_boolq(df: pd.DataFrame) -> pd.DataFrame:
-    df['question'] = df.apply(lambda row: f"{row['passage']}\n{row['question'].capitalize()}?", axis=1)
+    df['question'] = df.apply(lambda row: f"{row['passage']}\nQuestion: {row['question'].capitalize()}?", axis=1)
     df['label'] = df['answer'].apply(lambda x: 'Yes' if x else 'No')
     df['gold'] = ''
     df['corpus'] = df.apply(lambda r: f"{r['question']} {r['label']}", axis=1)
@@ -183,7 +184,7 @@ def process_boolq(df: pd.DataFrame) -> pd.DataFrame:
 
 def process_humaneval(df: pd.DataFrame) -> pd.DataFrame:
     df['question'] = df['entry_point'].apply(
-        lambda name: f"Implement the function `{name}` as specified below:\n\n"
+        lambda name: f"Implement the function `{name}` as specified below:\n"
     ) + df['prompt']
     df['label'] = ''
     df['gold'] = df['prompt'] + df['canonical_solution']
