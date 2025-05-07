@@ -67,13 +67,6 @@ def main(args):
     weight_l2_file = os.path.join(args.activations_root_path, args.model_name, "weight_l2_info.pt")
     weight_data = torch.load(weight_l2_file)
 
-    shots_map = {
-        "mbpp": 0, "humaneval": 0,
-        "arc_easy": 0, "arc_challenge": 0, "hellaswag": 0,
-        "mathqa": 0, "gsm8k": 5, "piqa": 0,
-        "winogrande": 0, "openbookqa": 0, "boolq": 0
-    }
-
     for prompt_type in prompt_types:
         print(f"🔁 Prompt Type: {prompt_type}")
         activations_dir = os.path.join(args.activations_root_path, args.model_name, prompt_type)
@@ -148,8 +141,6 @@ def main(args):
             )
             os.makedirs(out_dir, exist_ok=True)
 
-            num_fewshot = min([shots_map.get(task, 0) for task in task_list])
-
             eval_cmd = [
                 "python", "-m", "lm_eval.__main__",
                 "--model", "hf",
@@ -157,14 +148,13 @@ def main(args):
                 "--tasks", task_str,
                 "--batch_size", "auto",
                 "--output_path", out_dir,
-                "--num_fewshot", str(num_fewshot),
+                "--num_fewshot", "0",  # 固定为 0
                 "--confirm_run_unsafe_code",
             ]
             print("[evaluate_tasks] Running evaluation:", " ".join(eval_cmd))
             subprocess.run(eval_cmd, check=True, env=env)
 
         finally:
-            # 保证清理，即使中间报错
             if not args.keep_temp:
                 shutil.rmtree(temp_model_dir, ignore_errors=True)
                 print(f"🧹 Deleted temp model directory: {temp_model_dir}")
