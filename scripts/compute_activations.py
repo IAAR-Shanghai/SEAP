@@ -22,6 +22,7 @@ from src.activations import (
 from src.model_utils import load_model_and_tokenizer
 
 PROMPT_COLUMN_MAPPING = {
+    "corpus": "corpus",
     "zero_shot": "prompt_zero_shot",
     "cot": "prompt_cot",
     "icl": "prompt_icl",
@@ -103,7 +104,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default="./data/processed/prompts.parquet")
     parser.add_argument("--activations_root_path", type=str, default="./activations")
     parser.add_argument("--prompt_types", nargs="+", required=True,
-                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge"],
+                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge", "corpus"],
                         help="One or more prompt formats to use.")
     parser.add_argument("--tasks", nargs="+", default=None,
                         help="List of task names to compute activations for. If not set, all tasks are processed.")

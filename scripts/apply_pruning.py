@@ -89,7 +89,7 @@ if __name__ == "__main__":
     parser.add_argument("--tasks", nargs='+', required=True,
                         help="List of tasks to prune on, e.g., gsm8k hellaswag")
     parser.add_argument("--prompt_type", type=str, required=True,
-                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge"],
+                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge", "corpus"],
                         help="Prompt type used to generate activations and masks.")
     parser.add_argument("--output_dir", type=str, default="./pruned_models")
 

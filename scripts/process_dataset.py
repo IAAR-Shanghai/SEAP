@@ -74,15 +74,23 @@ def build_base_dataset(raw_data_dir, sample_size, seed, tasks):
             if df.empty:
                 print(f"⚠️ Skipping empty split: {task_name} - {split_name}")
                 continue
-            if sample_size and len(df) > sample_size:
-                df = df.sample(n=sample_size, random_state=seed).reset_index(drop=True)
 
             processed = processor(df).copy()
+
+            processed = processed[processed["question"].notna()]
+            processed = processed[processed["question"].str.strip() != ""]
+            if processed.empty:
+                print(f"⚠️ No valid questions remaining after cleanup for {task_name} - {split_name}")
+                continue
+            
+            if sample_size and len(processed) > sample_size:
+                processed = processed.sample(n=sample_size, random_state=seed).reset_index(drop=True)
+
             processed["task_type"] = task_type_map.get(task_name, task_name)
             processed["split"] = split_name
             all_data.append(processed)
 
-    return pd.concat(all_data, ignore_index=True)
+    return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
 
 def generate_column(df, column, dry_run, temperature, max_tokens, force, args):
     def clean_output(text: str, column: str) -> str:

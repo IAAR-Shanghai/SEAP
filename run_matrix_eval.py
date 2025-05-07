@@ -8,8 +8,9 @@ import torch
 import argparse
 
 
-def run_job(prompt, calib, device_ids, base_cmd, eval_tasks):
+def run_job(prompt, calib, device_ids, base_cmd, eval_tasks, model_name):
     cmd = base_cmd + [
+        "--model_name", model_name,
         "--prompt_types", prompt,
         "--calibration_task", calib,
         "--task_types"
@@ -17,35 +18,39 @@ def run_job(prompt, calib, device_ids, base_cmd, eval_tasks):
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = device_ids
+    env["HF_ALLOW_CODE_EVAL"] = "1"  # 🛡️ 对 mbpp/humaneval 自动放行
 
-    print(f"[Spawn] prompt={prompt}, calib={calib}, GPUs={device_ids}")
+    print(f"[Spawn] model={model_name}, prompt={prompt}, calib={calib}, GPUs={device_ids}")
     subprocess.run(cmd, env=env, check=True)
 
 
 def main(args):
-    prompt_types = ["cot", "icl", "knowledge", "zero_shot"]
-    calibration_tasks = [
-        "gsm8k", "mathqa", "arc_easy", "arc_challenge",
-        "openbookqa", "winogrande", "piqa", "hellaswag", "boolq",
+    # 默认配置
+    prompt_types = args.prompt_types or ["zero_shot", "cot", "icl", "knowledge", "corpus"]
+    calibration_tasks = args.calibration_tasks or [
+        "mbpp", "humaneval",
+        "gsm8k", "mathqa",
+        "arc_easy", "arc_challenge", "openbookqa", 
+        "winogrande", "piqa", "hellaswag", "boolq",
         "wikitext2", "c4"
     ]
-    eval_tasks = [
-        "gsm8k", "mathqa", "arc_easy", "arc_challenge",
-        "openbookqa", "winogrande", "piqa", "hellaswag", "boolq"
+    eval_tasks = args.eval_tasks or [
+        "mbpp", "humaneval",
+        "gsm8k", "mathqa",
+        "arc_easy", "arc_challenge", "openbookqa", 
+        "winogrande", "piqa", "hellaswag", "boolq",
     ]
+    model_names = args.model_names or ["Llama-2-7b-hf", "Llama-2-13b-hf"]
 
     base_cmd = [
         "python", "evaluate_tasks.py",
-        "--model_root_path", "/mnt/public/model/huggingface",
-        "--model_name", "Llama-2-13b-hf",
-        "--activations_root_path", "./activations",
-        "--temp_dir", "./tmp",
-        "--output_base_dir", "./eval_out"
+        "--model_root_path", args.model_root_path,
+        "--activations_root_path", args.activations_root_path,
+        "--temp_dir", args.temp_dir,
+        "--output_base_dir", args.output_base_dir,
     ]
 
-    combos = list(itertools.product(prompt_types, calibration_tasks))
-
-    # e.g. for 4 GPUs and 2 threads => [ "0,1", "2,3" ]
+    # GPU 分配
     gpus = list(map(str, range(torch.cuda.device_count())))
     gpus_per_thread = len(gpus) // args.num_threads
     device_groups = [
@@ -55,27 +60,41 @@ def main(args):
 
     print(f"🔧 Using {args.num_threads} threads with device groups: {device_groups}")
 
-    for i in range(0, len(combos), args.num_threads):
-        procs = []
-        for j in range(args.num_threads):
-            if i + j >= len(combos):
-                continue
-            prompt, calib = combos[i + j]
-            gpu_ids = device_groups[j]
-            p = Process(target=run_job, args=(prompt, calib, gpu_ids, base_cmd, eval_tasks))
-            p.start()
-            procs.append(p)
+    # 每个模型单独跑一轮
+    for model_name in model_names:
+        print(f"\n🚀 Running evaluation for model: {model_name}")
+        combos = list(itertools.product(prompt_types, calibration_tasks))
 
-        for p in procs:
-            p.join()
-        gc.collect()
-        torch.cuda.empty_cache()
-        time.sleep(2)
+        for i in range(0, len(combos), args.num_threads):
+            procs = []
+            for j in range(args.num_threads):
+                if i + j >= len(combos):
+                    continue
+                prompt, calib = combos[i + j]
+                gpu_ids = device_groups[j]
+                p = Process(target=run_job, args=(prompt, calib, gpu_ids, base_cmd, eval_tasks, model_name))
+                p.start()
+                procs.append(p)
+
+            for p in procs:
+                p.join()
+            gc.collect()
+            torch.cuda.empty_cache()
+            time.sleep(2)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_threads", type=int, default=4,
-                        help="Number of parallel threads (each uses N GPUs)")
+    parser.add_argument("--num_threads", type=int, default=4, help="Number of parallel threads")
+    parser.add_argument("--model_names", nargs="+", default=None)
+    parser.add_argument("--prompt_types", nargs="+", default=None)
+    parser.add_argument("--calibration_tasks", nargs="+", default=None)
+    parser.add_argument("--eval_tasks", nargs="+", default=None)
+
+    parser.add_argument("--model_root_path", type=str, default="/mnt/public/model/huggingface")
+    parser.add_argument("--activations_root_path", type=str, default="./activations")
+    parser.add_argument("--temp_dir", type=str, default="./tmp")
+    parser.add_argument("--output_base_dir", type=str, default="./eval_out")
+
     args = parser.parse_args()
     main(args)

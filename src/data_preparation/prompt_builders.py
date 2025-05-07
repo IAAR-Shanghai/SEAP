@@ -15,10 +15,10 @@ def build_zero_shot_prompt(row: dict) -> str:
         return f"{row['question']}"
 
     elif row["task_format"] == "generative":
-        return f"# Task:\n{row['question']}\n\n# Solution:\n{answer}"
+        return f"# Task:\n{row['question']}\n\n# Solution:\n"
 
     else:
-        return f"Question: {row['question']}\nAnswer: {answer}"
+        return f"Question: {row['question']}\nAnswer: "
 
 def build_cot_prompt(row: dict) -> str:
     rationale = row.get("rationale", "").strip()
