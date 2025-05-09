@@ -88,7 +88,7 @@ def main(args):
             shot_inputs=shot_inputs,
             task_types=shot_task_types
         )
-
+        
         print("[compute_activations] Saving activations to disk...")
         save_activations_dict(captured_acts, output_root=activations_output_dir)
 

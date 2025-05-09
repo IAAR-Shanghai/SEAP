@@ -1,7 +1,8 @@
 TASK_FORMAT_TEMPLATES = {
     "multiple_choice": {
-       "rationale": lambda row: (
-            "You are a reasoning assistant. Given a multiple-choice question and the correct answer, briefly explain why the answer is correct and why the other options are incorrect. Be concise and analyze each option.\n\n"
+        "rationale": lambda row: (
+            "You are a reasoning assistant. Given a multiple-choice question and the correct answer, briefly explain why the answer is correct and why the other options are incorrect. "
+            "For yes/no or true/false questions, justify the correct choice using evidence from the passage.\n\n"
 
             "Example 1:\n"
             "Question:\nWhich material conducts electricity?\n"
@@ -21,6 +22,13 @@ TASK_FORMAT_TEMPLATES = {
             "B) Burning it — Incorrect: It is energy-intensive and releases emissions.\n"
             "C) Recycling it — Correct: It conserves energy and reduces environmental impact.\n\n"
 
+            "Example 3 (Judgment QA):\n"
+            "Passage:\nThe movie premiered in 2018 and made over $1 billion worldwide.\n"
+            "Question:\nHas the movie been released?\n"
+            "Options:\nA) Yes\nB) No\n"
+            "Answer:\nA) Yes\n"
+            "Rationale:\nA) Yes — Correct: The passage states the movie premiered in 2018.\nB) No — Incorrect: It contradicts the given information.\n\n"
+
             f"Question:\n{row['question']}\n"
             f"Answer:\n{row['label']}) {row['gold']}\n"
             "Rationale:\n<analyze each option and explain why the correct one is best>"
@@ -34,15 +42,12 @@ TASK_FORMAT_TEMPLATES = {
             
             "Example 1 (Science QA):\n"
             "Corpus:\nWhich mixture contains ingredients that can be easily separated? fruit salad\n"
-            "Knowledge Statement:\nA fruit salad is a heterogeneous mixture whose components, such as sliced fruit, can be separated by physical means without altering their properties. This distinguishes it from homogeneous mixtures like salt water.\n\n"
+            "Knowledge Statement:\nA fruit salad is a heterogeneous mixture whose components, such as sliced fruit, can be separated by physical means without altering their properties.\n\n"
 
-            "Example 2 (Resource context):\n"
-            "Corpus:\nAluminum is a nonrenewable natural resource. Which of these methods of aluminum disposal is best for the environment? recycling it\n"
-            "Knowledge Statement:\nAluminum is a nonrenewable resource. Recycling it reduces the need for mining and conserves energy, making it the most environmentally sustainable option.\n\n"
-
-            "Example 3 (Math logic):\n"
-            "Corpus:\nIn a class, 7 students like basketball, 5 like cricket, and 3 like both. How many like either basketball or cricket or both?\n"
-            "Knowledge Statement:\nTo find the number of students who like basketball or cricket, apply the inclusion-exclusion principle: total = A + B − A∩B. Here, 7 + 5 − 3 = 9 students like at least one of the two sports.\n\n"
+            "Example 2 (Judgment QA):\n"
+            "Corpus:\nFilming took place from February to July 2017. The movie premiered in Madrid in May 2018 and was released in the United States on June 22, 2018. It grossed over $1.3 billion worldwide and became one of the highest-grossing films of the year.\n"
+            "Question: Has the movie been released? Yes\n"
+            "Knowledge Statement:\nThe movie completed production in 2017 and was publicly released in 2018, with screenings in major cities and substantial box office performance. These facts indicate that the film is no longer upcoming but has been widely distributed and viewed.\n\n"
 
             f"Corpus:\n{row['corpus']}\n"
             "Knowledge Statement:\n<your explanatory reformulation here>"

@@ -182,6 +182,29 @@ def process_boolq(df: pd.DataFrame) -> pd.DataFrame:
     df['knowledge'] = ''
     return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
 
+def process_race(df: pd.DataFrame) -> pd.DataFrame:
+    df['question'] = df.apply(
+        lambda row: f"{row['article']}\nQuestion: {row['question']}\nOptions:\n{format_choices(row['options'])}",
+        axis=1
+    )
+    df['label'] = df['answer']
+    
+    def get_gold(r):
+        try:
+            idx = ord(r['answer'].strip().upper()) - ord('A')
+            return r['options'][idx].strip() if 0 <= idx < len(r['options']) else ""
+        except Exception:
+            return ""
+    
+    df['gold'] = df.apply(get_gold, axis=1)
+    df['corpus'] = df['article'] + " " + df['question'] + " " + df['gold']
+    df['rationale'] = ''
+    df['task_type'] = 'race'
+    df['task_format'] = 'multiple_choice'
+    df['knowledge'] = ''
+    
+    return df[['task_type', 'task_format', 'question', 'label', 'gold', 'corpus', 'rationale', 'knowledge']]
+
 def process_humaneval(df: pd.DataFrame) -> pd.DataFrame:
     df['question'] = df['entry_point'].apply(
         lambda name: f"Implement the function `{name}` as specified below:\n"
@@ -242,6 +265,7 @@ TASK_PROCESSORS = {
     "hellaswag": process_hellaswag,
     "winogrande": process_winogrande,
     "boolq": process_boolq,
+    "race": process_race,
     "humaneval": process_humaneval,
     "mbpp": process_mbpp,
     "wikitext2": process_wikitext2,

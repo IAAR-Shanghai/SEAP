@@ -30,15 +30,17 @@ def main(args):
     calibration_tasks = args.calibration_tasks or [
         "mbpp", "humaneval",
         "gsm8k", "mathqa",
+        "boolq", "race",
         "arc_easy", "arc_challenge", "openbookqa", 
-        "winogrande", "piqa", "hellaswag", "boolq",
+        "winogrande", "piqa", "hellaswag", 
         "wikitext2", "c4"
     ]
     eval_tasks = args.eval_tasks or [
         "mbpp", "humaneval",
         "gsm8k", "mathqa",
+        "boolq", "race",
         "arc_easy", "arc_challenge", "openbookqa", 
-        "winogrande", "piqa", "hellaswag", "boolq",
+        "winogrande", "piqa", "hellaswag", 
     ]
     model_names = args.model_names or ["Llama-2-7b-hf", "Llama-2-13b-hf"]
 

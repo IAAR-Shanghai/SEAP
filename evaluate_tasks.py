@@ -148,7 +148,6 @@ def main(args):
                 "--tasks", task_str,
                 "--batch_size", "auto",
                 "--output_path", out_dir,
-                "--num_fewshot", "0",  # 固定为 0
                 "--confirm_run_unsafe_code",
             ]
             print("[evaluate_tasks] Running evaluation:", " ".join(eval_cmd))
