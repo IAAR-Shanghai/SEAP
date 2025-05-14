@@ -20,14 +20,14 @@ from src.pruning_utils.generate_masks import (
     compute_layerwise_sparsity
 )
 from src.pruning_utils.apply_pruning import apply_pruning_to_model
+from src.remove_test import load_layerwise_results
 
 def save_pruning_metadata(output_dir, task_type, method, strategy, pruning_ratio, sparsities, mask_file, prompt_type):
     folder_name = f"prompt={prompt_type}_task={task_type}_method={method}_strategy={strategy}_ratio={pruning_ratio}"
     task_output_dir = os.path.join(output_dir, folder_name)
     os.makedirs(task_output_dir, exist_ok=True)
 
-    sparsity_file = os.path.join(task_output_dir, "sparsity.json")
-    with open(sparsity_file, 'w') as f:
+    with open(os.path.join(task_output_dir, "sparsity.json"), 'w') as f:
         json.dump(sparsities, f, indent=4)
 
     metadata = {
@@ -38,11 +38,10 @@ def save_pruning_metadata(output_dir, task_type, method, strategy, pruning_ratio
         "pruning_ratio": pruning_ratio,
         "mask_file": mask_file,
     }
-    metadata_file = os.path.join(task_output_dir, "metadata.json")
-    with open(metadata_file, 'w') as f:
+    with open(os.path.join(task_output_dir, "metadata.json"), 'w') as f:
         json.dump(metadata, f, indent=4)
 
-    print(f"[save_pruning_metadata] Metadata saved in {task_output_dir}")
+    print(f"[✓] Metadata saved in {task_output_dir}")
 
 def main(args):
     torch.manual_seed(args.seed)
@@ -66,28 +65,36 @@ def main(args):
     print(f"[prune_model] Model config: num_layers={num_layers}, hidden_size={hidden_size}, "
           f"num_heads={num_heads}, intermediate_size={intermediate_size}, head_dim={head_dim}")
 
-    strategy_kwargs = {"k": args.logistic_k, "x0": args.logistic_x0} if args.sparsity_strategy == "logistic" else {}
-    use_softmask = not args.hardmask
+    # 设置策略参数
+    strategy_kwargs = {
+        "protect_head": args.protect_head,
+        "protect_tail": args.protect_tail
+    }
 
+    # 可选地加载 layer importance 数据
+    cos_sims = remove_results = fitted_results = None
+    if args.sparsity_strategy in {"cosine", "retention", "linear_fit", "logistic_fit"}:
+        if not args.layer_importance_dir:
+            raise ValueError(f"[!] Strategy '{args.sparsity_strategy}' requires --layer_importance_dir.")
+        print(f"[INFO] Loading layer importance from {args.layer_importance_dir}")
+        _, cos_sims, remove_results, fitted_results = load_layerwise_results(
+            model_name=args.model_name,
+            base_dir=args.layer_importance_dir
+        )
+
+    use_softmask = not args.hardmask
     mask_output_dir = os.path.join(args.mask_output_dir, args.model_name)
     os.makedirs(mask_output_dir, exist_ok=True)
 
     for prompt_type in args.prompt_types:
-        print(f"🔁 Processing prompt type: {prompt_type}")
+        print(f"\n🔁 Processing prompt type: {prompt_type}")
         activations_dir = os.path.join(args.activations_root_path, args.model_name, prompt_type)
         print(f"[prune_model] Loading activations from {activations_dir}")
         all_task_activations = load_activations(activations_dir)
 
-        if args.tasks:
-            missing = [t for t in args.tasks if t not in all_task_activations]
-            if missing:
-                raise ValueError(f"The following tasks were not found in activations: {missing}")
-            task_list = args.tasks
-        else:
-            task_list = sorted(all_task_activations.keys())
-
+        task_list = args.tasks if args.tasks else sorted(all_task_activations.keys())
         for task_type in task_list:
-            print(f"→ task={task_type}")
+            print(f"\n→ task={task_type}")
             activation_data = all_task_activations[task_type]
 
             scores_dict = compute_all_layers_scores(
@@ -107,7 +114,10 @@ def main(args):
                 hidden_size=hidden_size,
                 num_heads=num_heads,
                 total_layers=num_layers,
-                strategy_kwargs=strategy_kwargs
+                strategy_kwargs=strategy_kwargs,
+                cos_sims=cos_sims,
+                remove_results=remove_results,
+                fitted_results=fitted_results
             )
 
             sparsities, global_sparsity = compute_layerwise_sparsity(
@@ -118,6 +128,8 @@ def main(args):
             )
 
             print(f"Global sparsity: {global_sparsity:.4f}")
+            for l, d in sparsities.items():
+                print(f"Layer {l:02d}: attn={d['attn_sparsity']:.3f}, mlp={d['mlp_sparsity']:.3f}")
 
             task_output_dir = os.path.join(
                 mask_output_dir,
@@ -159,16 +171,16 @@ def main(args):
                 torch.save(model, f"{pruned_save_dir}/pruned_model.pt")
             tokenizer.save_pretrained(pruned_save_dir)
 
-            print(f"[prune_model] Saved pruned model to {pruned_save_dir}")
+            print(f"[✓] Saved pruned model to {pruned_save_dir}")
 
             if len(task_list) > 1 and task_type != task_list[-1]:
-                print("[prune_model] Reloading original model for next task")
+                print("[↩] Reloading model for next task...")
                 del model
                 torch.cuda.empty_cache()
                 model, tokenizer = load_model_and_tokenizer(model_path)
                 model.eval().to("cuda")
 
-    print("✅ All pruning completed.")
+    print("\n✅ All pruning completed.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prune model directly from activation statistics and save result.")
@@ -176,17 +188,20 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--activations_root_path", type=str, default="./activations")
     parser.add_argument("--prompt_types", nargs="+", required=True,
-                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge"])
+                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge", "experts"])
     parser.add_argument("--tasks", nargs="+", default=None)
     parser.add_argument("--mask_output_dir", type=str, default="./pruning_masks")
     parser.add_argument("--pruned_model_output_dir", type=str, default="./pruned_models")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--method", type=str, default="WIFV", choices=["WIFV", "WIFN"])
-    parser.add_argument("--sparsity_strategy", type=str, default="logistic",
-                        choices=["uniform", "logistic", "global"])
+    parser.add_argument("--sparsity_strategy", type=str, default="retention",
+                        choices=["uniform", "global", "cosine", "retention", "linear_fit", "logistic_fit"])
     parser.add_argument("--pruning_ratio", type=float, default=0.2)
-    parser.add_argument("--logistic_k", type=float, default=1.2)
-    parser.add_argument("--logistic_x0", type=float, default=0.3)
-    parser.add_argument("--hardmask", action="store_true")
+    parser.add_argument("--protect_head", type=int, default=0, help="Protect first N layers")
+    parser.add_argument("--protect_tail", type=int, default=0, help="Protect last N layers")
+    parser.add_argument("--layer_importance_dir", type=str, default=None,
+                        help="Required for cosine/retention/fit strategies")
+    parser.add_argument("--hardmask", action="store_true", help="Use hard binary masks instead of soft")
+
     args = parser.parse_args()
     main(args)

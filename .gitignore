@@ -12,6 +12,8 @@ tmp_eval/
 
 eval_out/
 
+eval_out_transfer/
+
 tmp/
 
 activations_plot/

@@ -1,35 +1,40 @@
 # src/classifier_utils.py
 
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 
-def train_classifier(X, y, test_size=0.2, random_state=42):
+def train_classifier(embeddings, labels, test_size=0.2, random_state=42):
     """
-    Train a logistic regression classifier on the provided data.
-
-    Args:
-        X (array-like): Feature matrix for training data.
-        y (array-like): Labels for training data.
-        test_size (float): Proportion of data to be used as the test set (default is 0.2).
-        random_state (int): Seed for random number generator for reproducibility (default is 42).
+    Train a multi-layer perceptron classifier on the given embeddings and labels.
 
     Returns:
-        clf: Trained classifier model.
-        X_test: Feature matrix for the test set.
-        y_test: Labels for the test set.
+        trained pipeline (scaler + MLP), test features, test labels
     """
-    # Split the data into training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
-    
-    # Initialize the logistic regression model
-    clf = LogisticRegression(max_iter=1000)
-    
-    # Fit the classifier to the training data
-    clf.fit(X_train, y_train)
-    
-    # Return the trained model and the test set
-    return clf, X_test, y_test
+    X_train, X_test, y_train, y_test = train_test_split(
+        embeddings, labels, test_size=test_size, random_state=random_state, stratify=labels
+    )
+
+    # Build pipeline with standardization + MLP
+    pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", MLPClassifier(
+            hidden_layer_sizes=(512, 256),  # Two hidden layers
+            activation="relu",
+            solver="adam",
+            alpha=1e-4,             # L2 regularization
+            learning_rate_init=1e-3,
+            max_iter=200,
+            random_state=random_state,
+            verbose=True
+        ))
+    ])
+
+    pipeline.fit(X_train, y_train)
+
+    return pipeline, X_test, y_test
 
 def evaluate_classifier(clf, X_test, y_test, task_type_to_label):
     """

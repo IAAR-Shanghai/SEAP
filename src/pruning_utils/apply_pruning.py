@@ -50,9 +50,9 @@ def compress_layer(
             o_proj.weight.data = o_proj.weight.data[:, keep_indices]
             o_proj.in_features = keep_indices.size(0)
 
-        # 更新模型结构信息
-        layer.self_attn.num_heads = int(attn_mask.sum().item())
-        layer.self_attn.hidden_size = layer.self_attn.num_heads * head_dim
+            # 更新模型结构信息
+            layer.self_attn.num_heads = int(attn_mask.sum().item())
+            layer.self_attn.hidden_size = layer.self_attn.num_heads * head_dim
 
     # ---------------------------------------------
     # B) MLP Channels 部分剪枝

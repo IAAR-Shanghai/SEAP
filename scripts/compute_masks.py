@@ -19,6 +19,7 @@ from src.pruning_utils.generate_masks import (
     save_masks_to_file,
     compute_layerwise_sparsity
 )
+from src.remove_test import load_layerwise_results
 
 def save_pruning_metadata(output_dir, task_type, method, strategy, pruning_ratio, sparsities, mask_file, prompt_type):
     folder_name = f"prompt={prompt_type}_task={task_type}_method={method}_strategy={strategy}_ratio={pruning_ratio}"
@@ -41,7 +42,7 @@ def save_pruning_metadata(output_dir, task_type, method, strategy, pruning_ratio
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=4)
 
-    print(f"[save_pruning_metadata] Metadata saved in {task_output_dir}")
+    print(f"[✓] Metadata saved in {task_output_dir}")
 
 def main(args):
     torch.manual_seed(args.seed)
@@ -70,7 +71,21 @@ def main(args):
     model_output_dir = os.path.join(args.output_dir, args.model_name)
     os.makedirs(model_output_dir, exist_ok=True)
 
-    strategy_kwargs = {"k": args.logistic_k, "x0": args.logistic_x0} if args.sparsity_strategy == "logistic" else {}
+    strategy_kwargs = {
+        "protect_head": args.protect_head,
+        "protect_tail": args.protect_tail
+    }
+
+    # Load layer importance data if needed
+    cos_sims = remove_results = fitted_results = None
+    if args.sparsity_strategy in {"cosine", "retention", "linear_fit", "logistic_fit"}:
+        if not args.layer_importance_dir:
+            raise ValueError(f"[!] Strategy '{args.sparsity_strategy}' requires --layer_importance_dir.")
+        print(f"[INFO] Loading layer importance data from {args.layer_importance_dir}")
+        _, cos_sims, remove_results, fitted_results = load_layerwise_results(
+            model_name=args.model_name,
+            base_dir=args.layer_importance_dir
+        )
 
     for prompt_type in args.prompt_types:
         print(f"\n🔁 Processing prompt type: {prompt_type}")
@@ -109,7 +124,10 @@ def main(args):
                 hidden_size=hidden_size,
                 num_heads=num_heads,
                 total_layers=num_layers,
-                strategy_kwargs=strategy_kwargs
+                strategy_kwargs=strategy_kwargs,
+                cos_sims=cos_sims,
+                remove_results=remove_results,
+                fitted_results=fitted_results
             )
 
             sparsities, global_sparsity = compute_layerwise_sparsity(
@@ -160,10 +178,12 @@ if __name__ == "__main__":
 
     parser.add_argument("--method", type=str, default="WIFV", choices=["WIFV", "WIFN"])
     parser.add_argument("--sparsity_strategy", type=str, default="logistic",
-                        choices=["uniform", "logistic", "global"])
+                        choices=["uniform", "logistic", "global", "cosine", "retention", "linear_fit", "logistic_fit"])
     parser.add_argument("--pruning_ratio", type=float, default=0.2)
-    parser.add_argument("--logistic_k", type=float, default=1.2)
-    parser.add_argument("--logistic_x0", type=float, default=0.3)
+    parser.add_argument("--protect_head", type=int, default=2, help="Number of bottom layers to protect from pruning")
+    parser.add_argument("--protect_tail", type=int, default=3, help="Number of top layers to protect from pruning")
+    parser.add_argument("--layer_importance_dir", type=str, default=None,
+                        help="Path to layerwise importance data (for cosine/retention/fit strategies)")
 
     args = parser.parse_args()
     main(args)

@@ -11,7 +11,7 @@ The masks can also be saved or loaded to/from files.
 import torch
 import math
 import os
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, List
 from src.pruning_utils.sparsity_scheduler import get_layerwise_sparsity_map
 
 def generate_layerwise_masks_from_scores(
@@ -58,7 +58,6 @@ def generate_layerwise_masks_from_scores(
 
     return attn_mask, mlp_mask
 
-
 def generate_masks_for_all_layers(
     scores_dict: Dict[int, Dict[str, torch.Tensor]],
     strategy: str,
@@ -66,30 +65,47 @@ def generate_masks_for_all_layers(
     hidden_size: int = None,
     num_heads: int = None,
     total_layers: int = None,
-    strategy_kwargs: Dict[str, Any] = None
+    strategy_kwargs: Dict[str, Any] = None,
+    cos_sims: List[float] = None,
+    remove_results: Dict[int, List[Tuple[float, float]]] = None,
+    fitted_results: Dict[str, Dict[str, float]] = None
 ) -> Tuple[Dict[int, torch.Tensor], Dict[int, torch.Tensor]]:
     """
     Generate pruning masks for all layers based on the selected sparsity strategy.
-    
+    Now supports: "uniform", "global", "cosine", "retention", "linear_fit", "logistic_fit".
+
     Args:
-        scores_dict (Dict[int, Dict[str, torch.Tensor]]): Scores for each layer/module.
-        strategy (str): Sparsity strategy. One of: "uniform", "logistic", "al-am".
-        pruning_ratio (float): Global pruning ratio or sparsity target.
-        hidden_size (int, optional): Required for AL-AM strategy.
-        num_heads (int, optional): Required for AL-AM strategy.
-        total_layers (int, optional): Required for logistic strategy.
-        strategy_kwargs (Dict[str, Any], optional): Additional strategy-specific args.
-    
+        scores_dict: Per-layer importance scores.
+        strategy: Strategy name.
+        pruning_ratio: Target global sparsity.
+        hidden_size: Required for global strategy.
+        num_heads: Required for global strategy.
+        total_layers: Total number of layers (optional).
+        strategy_kwargs: Dict containing protect_head, protect_tail, etc.
+        cos_sims: List of cosine similarities per layer (for "cosine" strategy).
+        remove_results: Per-layer similarity retention test (for "retention").
+        fitted_results: Dict with linear/logistic fit params (for "linear_fit", "logistic_fit").
+
     Returns:
-        Tuple[Dict[int, torch.Tensor], Dict[int, torch.Tensor]]: attention and MLP masks.
+        attn_masks, mlp_masks: Dicts mapping layer index to boolean mask tensors.
     """
-    if strategy_kwargs is None:
-        strategy_kwargs = {}
+    strategy_kwargs = strategy_kwargs or {}
+    num_layers = total_layers or len(scores_dict)
+
+    linear_params = None
+    logistic_params = None
+    if fitted_results is not None:
+        linear_params = fitted_results.get("linear_params")
+        logistic_params = fitted_results.get("logistic_params")
 
     sparsity_map = get_layerwise_sparsity_map(
         strategy=strategy,
-        num_layers=total_layers or len(scores_dict),
+        num_layers=num_layers,
         pruning_ratio=pruning_ratio,
+        cos_sims=cos_sims,
+        remove_results=remove_results,
+        linear_params=linear_params,
+        logistic_params=logistic_params,
         scores_dict=scores_dict,
         hidden_size=hidden_size,
         num_heads=num_heads,

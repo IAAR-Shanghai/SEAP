@@ -1,10 +1,9 @@
 # activations.py
 
 import os
-import gc
 import random
 from collections import defaultdict
-from typing import Dict, List, Tuple, Optional
+from typing import Dict
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -232,122 +231,6 @@ def save_activations_dict(activations_dict: Dict[str, Dict], output_root: str = 
         torch.save(task_data, save_path)
         print(f"[save_activations_dict] Saved {task_type} to {save_path}")
 
-def plot_selected_neurons_activations(
-    subset1_activations: dict,
-    subset2_activations: dict,
-    layers_to_plot: list,
-    task_names: list,
-    neuron_indices,
-    module_name: str = 'attention_post_aggregation',
-    plot_field: str = 'mean',
-    hidden_size: int = 4096,
-    num_heads: int = 32,
-    head_level: bool = False,
-    fontsize: int = 48,
-    tick_fontsize: int = 36,
-    cbar_fontsize: int = 36,
-    random_seed: int = None,
-    hspace: float = 0.6,
-    wspace: float = 0.3,
-    normalize: bool = True,
-    subset_names: tuple = ('Subset 1', 'Subset 2'),
-):
-    """
-    Plots activation heatmaps for selected neurons across tasks and layers.
-    Rows = subsets, Columns = tasks.
-    """
-
-    def z_score_standardize(data):
-        std_val = np.std(data)
-        if std_val == 0:
-            return data - np.mean(data)
-        return (data - np.mean(data)) / std_val
-
-    def extract_matrix(task_acts: dict, layers, neuron_ids):
-        mat = []
-        for l in layers:
-            vec = task_acts.get(l, {}).get(module_name, {}).get(plot_field, None)
-            if vec is None or not isinstance(vec, torch.Tensor):
-                mat.append(np.zeros(len(neuron_ids)))
-            else:
-                if head_level and 'attention' in module_name:
-                    # Reshape hidden_size → [num_heads, head_dim]
-                    head_dim = hidden_size // num_heads
-                    if vec.shape[0] != hidden_size:
-                        raise ValueError(f"Expected hidden size {hidden_size}, got {vec.shape[0]}")
-                    vec = vec.view(num_heads, head_dim).mean(dim=1)  # [num_heads]
-
-                selected = vec[neuron_ids].cpu().numpy()
-                if normalize:
-                    selected = z_score_standardize(selected)
-                mat.append(selected)
-        return np.array(mat)
-
-    # Auto infer neuron indices
-    if isinstance(neuron_indices, int):
-        found = False
-        for task in task_names:
-            for acts in [subset1_activations.get(task, {}), subset2_activations.get(task, {})]:
-                for l in layers_to_plot:
-                    vec = acts.get(l, {}).get(module_name, {}).get(plot_field, None)
-                    if vec is not None:
-                        if head_level and 'attention' in module_name:
-                            total_units = num_heads
-                        else:
-                            total_units = len(vec)
-                        found = True
-                        break
-                if found: break
-            if found: break
-
-        if not found:
-            raise ValueError("Unable to infer dimension from activations.")
-
-        if random_seed is not None:
-            random.seed(random_seed)
-        neuron_indices = random.sample(range(total_units), neuron_indices)
-
-    num_tasks = len(task_names)
-    num_subsets = 2  # Subset 1 & Subset 2
-
-    fig, axes = plt.subplots(num_subsets, num_tasks,
-                             figsize=(len(neuron_indices) * num_tasks,
-                                      len(layers_to_plot) * num_subsets * 2))
-    fig.subplots_adjust(hspace=hspace, wspace=wspace)
-
-    if num_tasks == 1:
-        axes = np.array(axes).reshape(2, 1)
-
-    for col_idx, task in enumerate(task_names):
-        s1_acts = subset1_activations.get(task, {})
-        s2_acts = subset2_activations.get(task, {})
-
-        for row_idx, (acts, subset_label) in enumerate(zip([s1_acts, s2_acts], subset_names)):
-            mat = extract_matrix(acts, layers_to_plot, neuron_indices)
-            ax = axes[row_idx, col_idx]
-            heatmap = sns.heatmap(
-                mat,
-                xticklabels=[f'D{i}' for i in neuron_indices],
-                yticklabels=[f'L{i}' for i in layers_to_plot],
-                cmap='coolwarm',
-                center=0 if normalize else None,
-                ax=ax,
-                cbar=True,
-                cbar_kws={'shrink': 0.8, 'label': f'Activation {plot_field}'}
-            )
-            heatmap.collections[0].colorbar.ax.tick_params(labelsize=cbar_fontsize)
-            heatmap.collections[0].colorbar.set_label(f'Activation {plot_field}', size=cbar_fontsize)
-
-            ax.set_title(f"{task} - {subset_label}", fontsize=fontsize, pad=20, fontweight='bold')
-            ax.set_xlabel('Neuron Index', fontsize=fontsize, labelpad=10)
-            ax.set_ylabel('Layer Index', fontsize=fontsize, labelpad=10)
-            ax.tick_params(axis='x', labelsize=tick_fontsize, rotation=90)
-            ax.tick_params(axis='y', labelsize=tick_fontsize)
-
-    plt.tight_layout()
-    plt.show()
-
-
 def load_activations(root_path='../activations'):
     """
     Load all saved activations from the given directory and return them organized by task type.
@@ -419,39 +302,115 @@ def load_weight_l2_info(weight_l2_file):
     print(f"Loaded weight L2 info from {weight_l2_file}")
     return weight_l2_data
 
+def plot_selected_neurons_activations(
+    activations            : dict[str, dict],
+    task_groups            : dict[str, list[str]],
+    layers_to_plot         : list[int],
+    neuron_indices,
+    module_name            : str  = "mlp_intermediate_states",
+    plot_field             : str  = "l2",
+    hidden_size            : int  = 4096,
+    num_heads              : int  = 32,
+    head_level             : bool = False,
+    normalize              : bool = True,
+    tasks_per_group        : int  = 2,
+    random_seed            : int  | None = 42,
+    task_fontsize          : int  = 96,
+    tick_fontsize          : int  = 48,
+    cbar_fontsize          : int  = 48,
+    wspace                 : float= 0.35,
+    hspace                 : float= 0.6,
+):
+    """
+    Rows = 组内任务       Columns = 任务组
+    activations: {task: {layer: {module: {field: tensor}}}}
+    """
 
-def split_dataset_by_task(shot_inputs, task_types):
-    """
-    Splits the dataset into two subsets based on task types.
-    
-    Args:
-        shot_inputs (list): List of input prompts.
-        task_types (list): List of corresponding task types.
-    
-    Returns:
-        tuple: Four lists containing:
-            - subset1_shot_inputs (list): First subset of input prompts.
-            - subset1_task_types (list): Corresponding task types for subset 1.
-            - subset2_shot_inputs (list): Second subset of input prompts.
-            - subset2_task_types (list): Corresponding task types for subset 2.
-    """
-    task_to_samples = defaultdict(list)
-    
-    for ttype, inp in zip(task_types, shot_inputs):
-        task_to_samples[ttype].append(inp)
-    
-    s1_inps, s2_inps = [], []
-    s1_types, s2_types = [], []
-    
-    for task, samples in task_to_samples.items():
-        n = len(samples)
-        split_idx = n // 2
-        
-        s1_inps.extend(samples[:split_idx])
-        s1_types.extend([task] * split_idx)
-        s2_inps.extend(samples[split_idx:])
-        s2_types.extend([task] * (n - split_idx))
-    
-    return s1_inps, s1_types, s2_inps, s2_types
+    def zscore(x):
+        std = np.std(x)
+        return (x - np.mean(x)) / std if std else x - np.mean(x)
+
+    def extract(task_act, layers, ids):
+        out = []
+        for l in layers:
+            vec = task_act.get(l, {}).get(module_name, {}).get(plot_field, None)
+            if vec is None or not isinstance(vec, torch.Tensor):
+                out.append(np.zeros(len(ids)))
+            else:
+                if head_level and "attention" in module_name:
+                    head_dim = hidden_size // num_heads
+                    vec = vec.view(num_heads, head_dim).mean(dim=1)
+                sel = vec[ids].cpu().numpy()
+                out.append(zscore(sel) if normalize else sel)
+        return np.array(out)
+
+    # —— 随机抽 neuron —— 
+    if isinstance(neuron_indices, int):
+        dim = None
+        for t in activations.values():
+            for l in layers_to_plot:
+                v = t.get(l, {}).get(module_name, {}).get(plot_field, None)
+                if v is not None:
+                    dim = num_heads if (head_level and "attention" in module_name) else len(v)
+                    break
+            if dim:
+                break
+        if dim is None:
+            raise ValueError("Cannot infer neuron dimension.")
+        random.seed(random_seed)
+        neuron_indices = random.sample(range(dim), neuron_indices)
+
+    # —— Figure 网格 & 外部 colorbar 空间 —— 
+    groups = list(task_groups.keys())
+    n_cols = len(groups)
+    n_rows = tasks_per_group
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(n_cols * len(neuron_indices) * 1.2,
+                 n_rows * len(layers_to_plot) * 3),
+        gridspec_kw={
+            "width_ratios": [1] * n_cols,
+            "wspace": wspace,
+            "hspace": hspace,
+        },
+        constrained_layout=False
+    )
+
+    # —— 绘制 heatmaps（关掉内部 colorbar） —— 
+    last_hm = None
+    for col, grp in enumerate(groups):
+        tasks = task_groups[grp][:tasks_per_group]
+        for row, task in enumerate(tasks):
+            ax = axes[row, col]
+            if task not in activations:
+                ax.axis("off")
+                continue
+
+            mat = extract(activations[task], layers_to_plot, neuron_indices)
+            last_hm = sns.heatmap(
+                mat, ax=ax, cmap="coolwarm",
+                center=0 if normalize else None,
+                xticklabels=[f"N{i}" for i in neuron_indices],
+                yticklabels=[f"L{l}" for l in layers_to_plot],
+                cbar=False
+            )
+            ax.set_title(task, fontsize=task_fontsize, pad=15, fontweight="bold")
+            ax.set_xlabel("Neuron Index", fontsize=tick_fontsize, labelpad=8)
+            ax.set_ylabel("Layer Index",  fontsize=tick_fontsize, labelpad=8)
+            ax.tick_params(axis='x', labelsize=tick_fontsize, rotation=90)
+            ax.tick_params(axis='y', labelsize=tick_fontsize)
+
+    # —— 统一 external colorbar —— 
+    plt.tight_layout(rect=[0, 0, 0.90, 1])
+    cbar_ax = fig.add_axes([0.93, 0.15, 0.015, 0.7])
+    fig.colorbar(
+        last_hm.get_children()[0], cax=cbar_ax,
+        label=f"Activation {plot_field}"
+    )
+    cbar_ax.tick_params(labelsize=cbar_fontsize)
+    cbar_ax.yaxis.label.set_size(cbar_fontsize)
+
+    plt.show()
 
 

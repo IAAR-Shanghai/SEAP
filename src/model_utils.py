@@ -26,6 +26,8 @@ def load_model_and_tokenizer(model_name_or_path: str, device='auto'):
         output_hidden_states=True  # Ensures hidden states are returned
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    # if tokenizer.pad_token is None:
+    #     tokenizer.pad_token = tokenizer.eos_token
     model.eval()
     return model, tokenizer
 

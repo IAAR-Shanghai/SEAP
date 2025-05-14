@@ -1,100 +1,178 @@
+import numpy as np
 import torch
 import math
-from typing import Dict, Callable
+from typing import List, Dict, Tuple
 
 
-def uniform_sparsity(
-    num_layers: int,
-    sparsity: float
-) -> Dict[int, Dict[str, float]]:
+# ==== 通用工具函数 ====
+
+def normalize_importance_to_sparsity(
+    importance: List[float],
+    target_sparsity: float,
+    total_layers: int
+) -> List[float]:
     """
-    Assigns the same sparsity to all layers uniformly.
-
+    将 importance 映射到 sparsity，确保全局稀疏度 ≈ target_sparsity。
+    仅对传入的 importance 列表（非保护层）做分配，保护层应在外部合并。
+    
     Args:
-        num_layers (int): Total number of layers.
-        sparsity (float): Uniform sparsity ratio (0 ~ 1).
-
+        importance: 仅包含有效层的 importance 值。
+        target_sparsity: 全局目标稀疏度（会按比例映射到有效层）
+        total_layers: 模型总层数（包含保护层）
+    
     Returns:
-        Dict[int, Dict[str, float]]: Layer-wise sparsity mapping.
+        List[float]: 长度等于 len(importance)，表示对应层的稀疏度
     """
+    eps = 1e-10
+    L_eff = len(importance)
+    imp = np.array(importance, dtype=np.float32) + eps
+
+    # 关键修改：预算基于 total_layers 而非有效层数
+    total_target_sparsity = target_sparsity * total_layers
+    total_retention = L_eff - total_target_sparsity
+
+    imp_sum = imp.sum()
+    if imp_sum < 1e-10:
+        normed_retain = np.ones_like(imp) * (total_retention / L_eff)
+    else:
+        normed_retain = imp / imp_sum * total_retention
+
+    sparsity = 1.0 - normed_retain
+    sparsity = np.clip(sparsity, 0.0, 1.0)
+    return sparsity.tolist()
+
+def make_layerwise_sparsity_map(sparsity_list: List[float]) -> Dict[int, Dict[str, float]]:
     return {
-        layer: {
-            "attn_sparsity": sparsity,
-            "mlp_sparsity": sparsity
-        } for layer in range(num_layers)
+        i: {
+            "attn_sparsity": round(s, 6),
+            "mlp_sparsity": round(s, 6)
+        } for i, s in enumerate(sparsity_list)
     }
 
 
-def logistic_sparsity(
-    num_layers: int,
-    sparsity: float,
-    m: int = 2,
-    n: int = 2,
-    k: float = 1.2,
-    x0: float = 0.3
+def print_sparsity_summary(sparsity_map: Dict[int, Dict[str, float]]):
+    attn_vals = [v["attn_sparsity"] for v in sparsity_map.values()]
+    mlp_vals = [v["mlp_sparsity"] for v in sparsity_map.values()]
+    avg_attn = sum(attn_vals) / len(attn_vals)
+    avg_mlp = sum(mlp_vals) / len(mlp_vals)
+    print(f"[Sparsity Summary]  Avg ATT: {avg_attn:.4f} | Avg MLP: {avg_mlp:.4f}")
+
+
+# ==== 策略实现 ====
+
+def uniform_sparsity(num_layers: int, sparsity: float) -> Dict[int, Dict[str, float]]:
+    return {
+        layer: {"attn_sparsity": sparsity, "mlp_sparsity": sparsity}
+        for layer in range(num_layers)
+    }
+
+def cosine_sparsity(
+    cos_sims: List[float],
+    target_sparsity: float,
+    protect_head: int = 0,
+    protect_tail: int = 0
 ) -> Dict[int, Dict[str, float]]:
     """
-    Computes layerwise sparsity using a logistic decay pattern, adjusting for protected layers (m and n)
-    to ensure the overall model meets the global target sparsity.
-
-    Args:
-        num_layers (int): Total number of layers.
-        sparsity (float): Target global sparsity (0 ~ 1).
-        m (int): Number of bottom layers not to prune.
-        n (int): Number of top layers not to prune.
-        k (float): Logistic curve steepness.
-        x0 (float): Logistic curve midpoint.
-
-    Returns:
-        Dict[int, Dict[str, float]]: Layer-wise sparsity map.
+    基于 cosine 相似度计算 importance，并映射 sparsity。
+    保护层不参与归一化分配。
     """
-    effective_layers = num_layers - m - n
-    if effective_layers <= 0:
-        raise ValueError("Too many protected layers: m + n must be less than total number of layers.")
+    num_layers = len(cos_sims)
+    
+    full_importance = [1 - s for s in cos_sims]
 
-    # Adjusted target sparsity for effective layers
-    adjusted_target = sparsity * num_layers / effective_layers
-    adjusted_target = min(adjusted_target, 1.0)
+    protected = set(range(protect_head)) | set(range(num_layers - protect_tail, num_layers))
+    effective_indices = [i for i in range(num_layers) if i not in protected]
+    effective_importance = [full_importance[i] for i in effective_indices]
 
-    # Solve for lambda to meet adjusted target
-    def get_lambda():
-        def avg_sp(lambda_):
-            total = 0.0
-            for i in range(num_layers):
-                if i < m or i >= num_layers - n:
-                    continue
-                x = (i - m) / (effective_layers - 1)
-                rho = lambda_ / (1 + math.exp(-k * (x - x0)))
-                total += rho
-            return total / effective_layers
+    eff_sparsity = normalize_importance_to_sparsity(
+        importance=effective_importance,
+        target_sparsity=target_sparsity,
+        total_layers=num_layers
+    )
 
-        lo, hi = 0.0, 2.0
-        for _ in range(100):
-            mid = (lo + hi) / 2.0
-            if abs(avg_sp(mid) - adjusted_target) < 1e-4:
-                return mid
-            if avg_sp(mid) > adjusted_target:
-                hi = mid
-            else:
-                lo = mid
-        return (lo + hi) / 2.0
+    sparsity = [0.0] * num_layers
+    for i, s in zip(effective_indices, eff_sparsity):
+        sparsity[i] = s
 
-    lambda_star = get_lambda()
-    sparsity_map = {}
+    return make_layerwise_sparsity_map(sparsity)
 
+def retention_sparsity(
+    remove_results: Dict[int, List[Tuple[float, float]]],
+    num_layers: int,
+    target_sparsity: float,
+    protect_head: int = 0,
+    protect_tail: int = 0
+) -> Dict[int, Dict[str, float]]:
+    """
+    根据每层平均保留率 (1 - similarity) 反映重要性，映射到稀疏度。
+    保护层不参与稀疏度分配，但计入目标 sparsity 的约束。
+    """
+    full_importance = []
     for i in range(num_layers):
-        if i < m or i >= num_layers - n:
-            rho = 0.0
+        if i in remove_results:
+            sims = [sim for _, sim in remove_results[i]]
+            imp = 1.0 - float(np.mean(sims))
         else:
-            x = (i - m) / (effective_layers - 1)
-            rho = lambda_star / (1 + math.exp(-k * (x - x0)))
-        sparsity_map[i] = {
-            "attn_sparsity": round(min(max(rho, 0.0), 1.0), 6),
-            "mlp_sparsity":  round(min(max(rho, 0.0), 1.0), 6)
-        }
+            imp = 0.0
+        full_importance.append(imp)
 
-    return sparsity_map
+    protected = set(range(protect_head)) | set(range(num_layers - protect_tail, num_layers))
+    effective_indices = [i for i in range(num_layers) if i not in protected]
+    effective_importance = [full_importance[i] for i in effective_indices]
 
+    eff_sparsity = normalize_importance_to_sparsity(
+        importance=effective_importance,
+        target_sparsity=target_sparsity,
+        total_layers=num_layers
+    )
+
+    sparsity = [0.0] * num_layers
+    for i, s in zip(effective_indices, eff_sparsity):
+        sparsity[i] = s
+
+    return make_layerwise_sparsity_map(sparsity)
+
+def fitted_sparsity(
+    fitted_meta: Dict[str, float],
+    num_layers: int,
+    target_sparsity: float,
+    fit_type: str = "linear",  # or "logistic"
+    protect_head: int = 0,
+    protect_tail: int = 0,
+) -> Dict[int, Dict[str, float]]:
+    """
+    根据线性/逻辑函数的拟合参数生成各层的相似度估计，映射到 importance → sparsity。
+    保护层不参与归一化，但计入全局 sparsity 要求。
+    """
+    assert fit_type in {"linear", "logistic"}
+    assert "a" in fitted_meta and "b" in fitted_meta
+    a, b = fitted_meta["a"], fitted_meta["b"]
+
+    protected = set(range(protect_head)) | set(range(num_layers - protect_tail, num_layers))
+    effective_indices = [i for i in range(num_layers) if i not in protected]
+
+    full_importance = []
+    for i in range(num_layers):
+        if fit_type == "linear":
+            sim = a * i + b
+        else:
+            sim = 1 / (1 + math.exp(-(a * i + b)))
+        imp = 1.0 - sim
+        full_importance.append(imp)
+
+    effective_importance = [full_importance[i] for i in effective_indices]
+
+    eff_sparsity = normalize_importance_to_sparsity(
+        importance=effective_importance,
+        target_sparsity=target_sparsity,
+        total_layers=num_layers
+    )
+
+    sparsity = [0.0] * num_layers
+    for i, s in zip(effective_indices, eff_sparsity):
+        sparsity[i] = s
+
+    return make_layerwise_sparsity_map(sparsity)
 
 def global_sparsity(
     scores_dict: Dict[int, Dict[str, torch.Tensor]],
@@ -102,72 +180,37 @@ def global_sparsity(
     num_heads: int,
     pruning_ratio: float,
 ) -> Dict[int, Dict[str, float]]:
-    """
-    Calculates sparsity per layer based on global cost-aware strategy.
-
-    Args:
-        scores_dict (Dict[int, Dict[str, torch.Tensor]]): Computed scores from compute_scores.py.
-        hidden_size (int): Transformer hidden size.
-        num_heads (int): Number of attention heads.
-        pruning_ratio (float): Global resource pruning ratio (0 ~ 1).
-
-    Returns:
-        Dict[int, Dict[str, float]]: Per-layer sparsity dict.
-    """
     def compression_factor(hidden_size, num_heads):
         return (4.0 / 3.0) * (hidden_size / num_heads)
 
     def robust_standardize(x: torch.Tensor, eps=1e-9, clip_threshold=3.0):
-        if x.dim() == 1:
-            med = x.median()
-            iqr = torch.quantile(x, 0.75) - torch.quantile(x, 0.25)
-            return torch.clamp((x - med) / (iqr + eps), -clip_threshold, clip_threshold)
-        elif x.dim() == 2:
-            med = torch.median(x, dim=1, keepdim=True).values
-            q1 = torch.quantile(x, 0.25, dim=1, keepdim=True)
-            q3 = torch.quantile(x, 0.75, dim=1, keepdim=True)
-            iqr = q3 - q1
-            return torch.clamp((x - med) / (iqr + eps), -clip_threshold, clip_threshold)
-        else:
-            raise ValueError("Input must be 1D or 2D tensor")
+        med = x.median()
+        iqr = torch.quantile(x, 0.75) - torch.quantile(x, 0.25)
+        return torch.clamp((x - med) / (iqr + eps), -clip_threshold, clip_threshold)
 
     head_cost = compression_factor(hidden_size, num_heads)
     chn_cost = 1.0
 
-    all_scores = []
-    all_costs = []
-    all_index = []
-
-    attn_cnt = {}
-    mlp_cnt = {}
+    all_scores, all_costs, all_index = [], [], []
+    attn_cnt, mlp_cnt = {}, {}
 
     for l, d in scores_dict.items():
-        attn_s = d["attn_scores"]
-        mlp_s = d["mlp_scores"]
-        attn_cnt[l] = attn_s.numel()
-        mlp_cnt[l] = mlp_s.numel()
+        attn_s = robust_standardize(d["attn_scores"])
+        mlp_s = robust_standardize(d["mlp_scores"])
+        attn_cnt[l], mlp_cnt[l] = attn_s.numel(), mlp_s.numel()
 
-        attn_s = robust_standardize(attn_s)
-        mlp_s = robust_standardize(mlp_s)
-
-        for i, s in enumerate(attn_s):
-            all_scores.append(s.item())
-            all_costs.append(head_cost)
-            all_index.append((True, l, i))
-
-        for i, s in enumerate(mlp_s):
-            all_scores.append(s.item())
-            all_costs.append(chn_cost)
-            all_index.append((False, l, i))
+        all_scores += attn_s.tolist() + mlp_s.tolist()
+        all_costs += [head_cost] * attn_s.numel() + [chn_cost] * mlp_s.numel()
+        all_index += [(True, l, i) for i in range(attn_s.numel())]
+        all_index += [(False, l, i) for i in range(mlp_s.numel())]
 
     all_scores = torch.tensor(all_scores)
     all_costs = torch.tensor(all_costs)
     sorted_idx = torch.argsort(all_scores, descending=True)
-    sorted_costs = all_costs[sorted_idx]
-    cumsum_costs = torch.cumsum(sorted_costs, dim=0)
+    cumsum_costs = torch.cumsum(all_costs[sorted_idx], dim=0)
     target_cost = (1 - pruning_ratio) * cumsum_costs[-1].item()
-
     cutoff = torch.searchsorted(cumsum_costs, target_cost).item()
+
     keep_mask = torch.zeros_like(sorted_idx, dtype=torch.bool)
     keep_mask[:cutoff] = True
 
@@ -175,7 +218,7 @@ def global_sparsity(
     kept_mlp = {l: 0 for l in scores_dict}
 
     for rank, sid in enumerate(sorted_idx):
-        is_attn, l, idx = all_index[sid.item()]
+        is_attn, l, _ = all_index[sid.item()]
         if keep_mask[rank]:
             if is_attn:
                 kept_attn[l] += 1
@@ -190,111 +233,57 @@ def global_sparsity(
             "attn_sparsity": round(min(max(sa, 0.0), 1.0), 6),
             "mlp_sparsity": round(min(max(sm, 0.0), 1.0), 6)
         }
-
     return sparsity_map
+
+
+# ==== 总统一致入口 ====
 
 def get_layerwise_sparsity_map(
     strategy: str,
     num_layers: int,
     pruning_ratio: float,
+    cos_sims: List[float] = None,
+    remove_results: Dict[int, List[Tuple[float, float]]] = None,
+    linear_params: Dict[str, float] = None,
+    logistic_params: Dict[str, float] = None,
     scores_dict: Dict[int, Dict[str, torch.Tensor]] = None,
     hidden_size: int = None,
     num_heads: int = None,
     strategy_kwargs: Dict = None
 ) -> Dict[int, Dict[str, float]]:
-    """
-    Main entry point to compute layerwise sparsity configuration.
-
-    Args:
-        strategy (str): One of "uniform", "logistic", or "al-am".
-        num_layers (int): Total number of layers in model.
-        pruning_ratio (float): Global pruning ratio (0 ~ 1).
-        scores_dict (Dict, optional): Required for 'al-am' strategy.
-        hidden_size (int, optional): Required for 'al-am'.
-        num_heads (int, optional): Required for 'al-am'.
-        strategy_kwargs (Dict, optional): Extra kwargs for strategy functions.
-
-    Returns:
-        Dict[int, Dict[str, float]]: Per-layer sparsity map.
-    """
     strategy_kwargs = strategy_kwargs or {}
+    protect_head = strategy_kwargs.get("protect_head", 0)
+    protect_tail = strategy_kwargs.get("protect_tail", 0)
 
     if strategy == "uniform":
         return uniform_sparsity(num_layers, pruning_ratio)
 
-    elif strategy == "logistic":
-        return logistic_sparsity(
-            num_layers=num_layers,
-            sparsity=pruning_ratio,
-            **strategy_kwargs
-        )
-
     elif strategy == "global":
         if scores_dict is None or hidden_size is None or num_heads is None:
-            raise ValueError("al-am requires scores_dict, hidden_size, and num_heads.")
-        return global_sparsity(
-            scores_dict=scores_dict,
-            hidden_size=hidden_size,
-            num_heads=num_heads,
-            pruning_ratio=pruning_ratio,
-            **strategy_kwargs
-        )
+            raise ValueError("global strategy requires scores_dict, hidden_size, and num_heads.")
+        return global_sparsity(scores_dict, hidden_size, num_heads, pruning_ratio)
+
+    elif strategy == "cosine":
+        if cos_sims is None:
+            raise ValueError("cos_sims must be provided for cosine strategy.")
+        return cosine_sparsity(cos_sims, pruning_ratio, protect_head, protect_tail)
+
+    elif strategy == "retention":
+        if remove_results is None:
+            raise ValueError("remove_results must be provided for retention strategy.")
+        return retention_sparsity(remove_results, num_layers, pruning_ratio, protect_head, protect_tail)
+
+    elif strategy == "linear_fit":
+        if linear_params is None:
+            raise ValueError("linear_params must be provided for linear_fit strategy.")
+        return fitted_sparsity(linear_params, num_layers, pruning_ratio, "linear", protect_head, protect_tail)
+
+    elif strategy == "logistic_fit":
+        if logistic_params is None:
+            raise ValueError("logistic_params must be provided for logistic_fit strategy.")
+        return fitted_sparsity(logistic_params, num_layers, pruning_ratio, "logistic", protect_head, protect_tail)
 
     else:
         raise ValueError(f"Unsupported strategy: {strategy}")
 
-if __name__ == "__main__":
-    import random
 
-    torch.manual_seed(42)
-    random.seed(42)
-
-    num_layers = 32
-    hidden_size = 1024
-    num_heads = 32
-    intermediate_size = 4096
-    pruning_ratio = 0.3
-
-    # ---- Build dummy scores_dict ----
-    scores_dict = {}
-    for layer in range(num_layers):
-        attn_scores = torch.randn(num_heads)
-        mlp_scores = torch.randn(intermediate_size)
-        scores_dict[layer] = {
-            "attn_scores": attn_scores,
-            "mlp_scores": mlp_scores
-        }
-
-    # ---- Test uniform ----
-    print("\n=== [uniform] ===")
-    uniform_map = get_layerwise_sparsity_map(
-        strategy="uniform",
-        num_layers=num_layers,
-        pruning_ratio=pruning_ratio
-    )
-    for k, v in uniform_map.items():
-        print(f"Layer {k}: {v}")
-
-    # ---- Test logistic ----
-    print("\n=== [logistic] ===")
-    logistic_map = get_layerwise_sparsity_map(
-        strategy="logistic",
-        num_layers=num_layers,
-        pruning_ratio=pruning_ratio,
-        strategy_kwargs={"k": 1.2, "x0": 0.3}
-    )
-    for k, v in logistic_map.items():
-        print(f"Layer {k}: {v}")
-
-    # ---- Test al-am ----
-    print("\n=== [global] ===")
-    al_am_map = get_layerwise_sparsity_map(
-        strategy="global",
-        num_layers=num_layers,
-        pruning_ratio=pruning_ratio,
-        scores_dict=scores_dict,
-        hidden_size=hidden_size,
-        num_heads=num_heads
-    )
-    for k, v in al_am_map.items():
-        print(f"Layer {k}: {v}")

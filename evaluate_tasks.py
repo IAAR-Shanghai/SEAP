@@ -2,9 +2,6 @@
 # coding: utf-8
 
 import os
-env = os.environ.copy()
-env["HF_ALLOW_CODE_EVAL"] = "1"
-
 import shutil
 import subprocess
 import argparse
@@ -17,12 +14,17 @@ from src.activations import load_activations
 from src.pruning_utils.compute_scores import compute_all_layers_scores
 from src.pruning_utils.generate_masks import generate_masks_for_all_layers
 from src.pruning_utils.apply_pruning import apply_pruning_to_model
+from src.remove_test import load_layerwise_results
+
+env = os.environ.copy()
+env["HF_ALLOW_CODE_EVAL"] = "1"
 
 
 def prune_model_from_activations(
     model, activation_data, weight_data,
     num_layers, hidden_size, num_heads, intermediate_size, method,
-    strategy, pruning_ratio, head_dim, use_softmask, strategy_kwargs
+    strategy, pruning_ratio, head_dim, use_softmask, strategy_kwargs,
+    cos_sims=None, remove_results=None, fitted_results=None
 ):
     scores_dict = compute_all_layers_scores(
         activation_data=activation_data,
@@ -41,7 +43,10 @@ def prune_model_from_activations(
         hidden_size=hidden_size,
         num_heads=num_heads,
         total_layers=num_layers,
-        strategy_kwargs=strategy_kwargs
+        strategy_kwargs=strategy_kwargs,
+        cos_sims=cos_sims,
+        remove_results=remove_results,
+        fitted_results=fitted_results
     )
 
     apply_pruning_to_model(
@@ -66,6 +71,17 @@ def main(args):
     model_path = os.path.join(args.model_root_path, args.model_name)
     weight_l2_file = os.path.join(args.activations_root_path, args.model_name, "weight_l2_info.pt")
     weight_data = torch.load(weight_l2_file)
+
+    # Load layerwise importance if needed
+    cos_sims = remove_results = fitted_results = None
+    if args.sparsity_strategy in {"cosine", "retention", "linear_fit", "logistic_fit"}:
+        if not args.layer_importance_dir:
+            raise ValueError(f"[!] Strategy '{args.sparsity_strategy}' requires --layer_importance_dir.")
+        print(f"[INFO] Loading layer importance data from {args.layer_importance_dir}")
+        _, cos_sims, remove_results, fitted_results = load_layerwise_results(
+            model_name=args.model_name,
+            base_dir=args.layer_importance_dir
+        )
 
     for prompt_type in prompt_types:
         print(f"🔁 Prompt Type: {prompt_type}")
@@ -99,10 +115,10 @@ def main(args):
             intermediate_size = config.intermediate_size
             use_softmask = not args.hardmask
 
-            strategy_kwargs = (
-                {"k": args.logistic_k, "x0": args.logistic_x0}
-                if args.sparsity_strategy == "logistic" else {}
-            )
+            strategy_kwargs = {
+                "protect_head": args.protect_head,
+                "protect_tail": args.protect_tail
+            }
 
             pruned_model = prune_model_from_activations(
                 model=model,
@@ -117,10 +133,12 @@ def main(args):
                 pruning_ratio=args.pruning_ratio,
                 head_dim=head_dim,
                 use_softmask=use_softmask,
-                strategy_kwargs=strategy_kwargs
+                strategy_kwargs=strategy_kwargs,
+                cos_sims=cos_sims,
+                remove_results=remove_results,
+                fitted_results=fitted_results
             )
 
-            # 保存模型
             if os.path.exists(temp_model_dir):
                 shutil.rmtree(temp_model_dir)
             os.makedirs(temp_model_dir, exist_ok=True)
@@ -131,7 +149,6 @@ def main(args):
             torch.cuda.empty_cache()
             gc.collect()
 
-            # 评估阶段
             task_str = ",".join(task_list)
             print(f"📊 Evaluating on tasks: {task_str}")
 
@@ -172,10 +189,12 @@ if __name__ == "__main__":
     parser.add_argument("--task_types", nargs='+', required=True)
     parser.add_argument("--calibration_task", type=str, required=True)
     parser.add_argument("--method", type=str, default="WIFV", choices=["WIFV", "WIFN"])
-    parser.add_argument("--sparsity_strategy", type=str, default="logistic", choices=["uniform", "logistic", "global"])
+    parser.add_argument("--sparsity_strategy", type=str, default="retention",
+                        choices=["uniform", "global", "cosine", "retention", "linear_fit", "logistic_fit"])
     parser.add_argument("--pruning_ratio", type=float, default=0.2)
-    parser.add_argument("--logistic_k", type=float, default=1.2)
-    parser.add_argument("--logistic_x0", type=float, default=0.3)
+    parser.add_argument("--protect_head", type=int, default=0)
+    parser.add_argument("--protect_tail", type=int, default=0)
+    parser.add_argument("--layer_importance_dir", type=str, default="./layer_importance")
     parser.add_argument("--hardmask", action="store_true")
     parser.add_argument("--temp_dir", type=str, default="./tmp")
     parser.add_argument("--output_base_dir", type=str, default="./eval_out")

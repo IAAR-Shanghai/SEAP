@@ -27,7 +27,8 @@ PROMPT_COLUMN_MAPPING = {
     "cot": "prompt_cot",
     "icl": "prompt_icl",
     "icl_cot": "prompt_icl_cot",
-    "knowledge": "knowledge"
+    "knowledge": "knowledge",
+    "experts": "prompt_experts",
 }
 
 def main(args):
@@ -88,7 +89,7 @@ def main(args):
             shot_inputs=shot_inputs,
             task_types=shot_task_types
         )
-        
+
         print("[compute_activations] Saving activations to disk...")
         save_activations_dict(captured_acts, output_root=activations_output_dir)
 
@@ -104,7 +105,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default="./data/processed/prompts.parquet")
     parser.add_argument("--activations_root_path", type=str, default="./activations")
     parser.add_argument("--prompt_types", nargs="+", required=True,
-                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge", "corpus"],
+                        choices=["zero_shot", "cot", "icl", "icl_cot", "knowledge", "corpus", "experts"],
                         help="One or more prompt formats to use.")
     parser.add_argument("--tasks", nargs="+", default=None,
                         help="List of task names to compute activations for. If not set, all tasks are processed.")

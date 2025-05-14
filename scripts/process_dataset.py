@@ -56,7 +56,6 @@ def build_base_dataset(raw_data_dir, sample_size, seed, tasks):
         "piqa": "piqa",
         "hellaswag": "hellaswag",
         "boolq": "boolq",
-        "race": "race",
         "wikitext2": "wikitext2",
         "c4": "c4"
     }
@@ -204,7 +203,7 @@ if __name__ == "__main__":
     parser.add_argument("--build_prompts", action="store_true")
     parser.add_argument("--overwrite_column", nargs="*", default=[])
 
-    parser.add_argument("--api_key", type=str, default=os.getenv("OPENAI_API_KEY", "sk-qUWqhTg5KZL2aOBk7Rrn6bUzOCLjBVYu9d7LmjbGpC9dPWso"))
+    parser.add_argument("--api_key", type=str, default=os.getenv("OPENAI_API_KEY", "sk-K3it6a5VKQ2FA7hOcLVTksMgdjWUG8Do9eE7WZ5tAYDlhFlo"))
     parser.add_argument("--api_base_url", type=str, default=os.getenv("OPENAI_BASE_URL", "https://api.claudeplus.top/v1"))
     parser.add_argument("--num_workers", type=int, default=16)
 
