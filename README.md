@@ -7,7 +7,7 @@
 SEAP (Sparse Expert Activation Pruning) is a **training-free pruning method** for large language models that preserves task-specific performance while reducing model size and computation. This repository contains full implementations for data processing, activation extraction, pruning strategies, and evaluation.
 
 <div align="center">
-  <img src="assets/framework.png" alt="SEAP framework" width="700">
+  <img src="assets/framework.png" alt="SEAP framework">
 </div>
 
 ---
