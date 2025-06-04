@@ -1,6 +1,19 @@
+"""
+Pruning application utilities for transformer models.
+
+This module provides functions for applying pruning masks to transformer models,
+supporting both structured and unstructured pruning of attention heads and MLP units.
+
+Author: why
+Date: 2024
+"""
+
+# Standard library imports
+from typing import Dict, Optional, Union
+
+# Third-party imports
 import torch
 import torch.nn as nn
-from typing import Dict, Optional, Union
 
 def compress_layer(
     layer: nn.Module,
@@ -8,40 +21,46 @@ def compress_layer(
     mlp_mask: Optional[torch.Tensor] = None,
     unstr: bool = False,
     head_dim: int = 128,
-):
-    """
-    对单个 Transformer 层进行剪枝或掩码处理（支持多卡分布）。
-
+) -> None:
+    """Apply pruning or masking to a single transformer layer.
+    
+    Supports distributed model across multiple GPUs. Can perform either
+    structured pruning (actually removing parameters) or unstructured
+    masking (zeroing weights without changing dimensions).
+    
     Args:
-        layer (nn.Module): 单个 Transformer Layer，需要有 self_attn 和 mlp。
-        attn_mask (Optional[torch.Tensor]): Attention head的mask，[num_heads]。
-        mlp_mask (Optional[torch.Tensor]): MLP hidden单元的mask，[intermediate_size]。
-        unstr (bool): 是否使用 unstructured masking（即软掩码，不改变维度）。
-        head_dim (int): 每个 attention head 的特征维度，默认128。
-
-    注：
-        - 如果 unstr=True，只对 weight做掩码乘0，不改参数shape；
-        - 如果 unstr=False，会硬删参数，改shape。
-        - 自动识别当前 layer 所在 device，支持多GPU模型分布。
+        layer: Single transformer layer with self_attn and mlp components
+        attn_mask: Mask for attention heads, shape [num_heads]
+        mlp_mask: Mask for MLP hidden units, shape [intermediate_size]
+        unstr: Whether to use unstructured masking (soft masks without dimension change)
+        head_dim: Feature dimension of each attention head
+        
+    Notes:
+        - If unstr=True, weights are masked by multiplication with 0s
+        - If unstr=False, parameters are actually removed, changing shapes
+        - Automatically detects device of current layer for multi-GPU support
     """
-    # 自动根据当前layer拿device
+    # Get device from current layer
     device = next(layer.parameters()).device
 
     # ---------------------------------------------
-    # A) Attention Heads 部分剪枝
+    # A) Prune Attention Heads
     # ---------------------------------------------
     if attn_mask is not None:
         attn_mask = attn_mask.to(device)
-        expanded_attn_mask = attn_mask.repeat_interleave(head_dim)  # 展开成 [hidden_size]
+        expanded_attn_mask = attn_mask.repeat_interleave(head_dim)  # Expand to [hidden_size]
 
-        q_proj, k_proj, v_proj, o_proj = layer.self_attn.q_proj, layer.self_attn.k_proj, layer.self_attn.v_proj, layer.self_attn.o_proj
+        q_proj = layer.self_attn.q_proj
+        k_proj = layer.self_attn.k_proj
+        v_proj = layer.self_attn.v_proj
+        o_proj = layer.self_attn.o_proj
 
         if unstr:
-            # soft masking：权重乘掩码，但不改变shape
+            # Soft masking: multiply weights by mask without changing shape
             for proj in [q_proj, k_proj, v_proj]:
                 proj.weight.data *= expanded_attn_mask.unsqueeze(-1)
         else:
-            # hard pruning：真的删掉无关的head
+            # Hard pruning: actually remove irrelevant heads
             keep_indices = torch.where(expanded_attn_mask > 0)[0]
             for proj in [q_proj, k_proj, v_proj]:
                 proj.weight.data = proj.weight.data[keep_indices]
@@ -50,24 +69,26 @@ def compress_layer(
             o_proj.weight.data = o_proj.weight.data[:, keep_indices]
             o_proj.in_features = keep_indices.size(0)
 
-            # 更新模型结构信息
+            # Update model structure information
             layer.self_attn.num_heads = int(attn_mask.sum().item())
             layer.self_attn.hidden_size = layer.self_attn.num_heads * head_dim
 
     # ---------------------------------------------
-    # B) MLP Channels 部分剪枝
+    # B) Prune MLP Channels
     # ---------------------------------------------
     if mlp_mask is not None:
         mlp_mask = mlp_mask.to(device)
 
-        up_proj, gate_proj, down_proj = layer.mlp.up_proj, layer.mlp.gate_proj, layer.mlp.down_proj
+        up_proj = layer.mlp.up_proj
+        gate_proj = layer.mlp.gate_proj
+        down_proj = layer.mlp.down_proj
 
         if unstr:
-            # soft masking
+            # Soft masking
             up_proj.weight.data *= mlp_mask.unsqueeze(-1)
             gate_proj.weight.data *= mlp_mask.unsqueeze(-1)
         else:
-            # hard pruning
+            # Hard pruning
             keep_indices = torch.where(mlp_mask > 0)[0]
             up_proj.weight.data = up_proj.weight.data[keep_indices]
             gate_proj.weight.data = gate_proj.weight.data[keep_indices]
@@ -89,16 +110,15 @@ def apply_pruning_to_model(
     mlp_masks: Dict[int, torch.Tensor],
     unstr: bool = True,
     head_dim: int = 128,
-):
-    """
-    给整个 Transformer 模型（多层）应用剪枝或掩码。
-
+) -> None:
+    """Apply pruning or masking to entire transformer model.
+    
     Args:
-        model (nn.Module): Transformer 模型，要求 model.model.layers 能拿到所有层。
-        attn_masks (Dict[int, torch.Tensor]): 每层对应的 attention mask。
-        mlp_masks (Dict[int, torch.Tensor]): 每层对应的 mlp hidden mask。
-        unstr (bool): 是否用 unstructured masking（默认为软剪枝）。
-        head_dim (int): 每个 attention head 的特征维度，默认128。
+        model: Transformer model with accessible model.model.layers
+        attn_masks: Dictionary mapping layer indices to attention masks
+        mlp_masks: Dictionary mapping layer indices to MLP hidden masks
+        unstr: Whether to use unstructured masking (default is soft pruning)
+        head_dim: Feature dimension of each attention head
     """
     layers = model.model.layers
 

@@ -1,22 +1,43 @@
-# src/model_utils.py
+"""
+Model and tokenizer utilities for handling transformer models.
 
-import torch
-import numpy as np
-from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+This module provides utility functions for loading, managing and extracting
+features from transformer models. It includes functions for getting hidden states
+and computing embeddings from input text.
+
+Author: why
+Date: 2024
+"""
+
+# Standard library imports
 from typing import List, Tuple, Dict, Any
 
-def load_model_and_tokenizer(model_name_or_path: str, device='auto'):
-    """
-    Load a model and tokenizer from the specified path.
+# Third-party imports
+import numpy as np
+import torch
+from tqdm import tqdm
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
+# Constants
+DEFAULT_DEVICE = 'cuda'
+DEFAULT_TEST_SIZE = 0.2
+DEFAULT_RANDOM_STATE = 42
+
+def load_model_and_tokenizer(
+    model_name_or_path: str,
+    device: str = 'auto'
+) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
+    """Load pretrained model and corresponding tokenizer.
+    
     Args:
-        model_name_or_path (str): Path to the model or model identifier.
-        device (str): Device to load the model on ('cuda' or 'cpu').
-
+        model_name_or_path: Model identifier or path
+        device: Device to load model on ('cuda' or 'cpu')
+        
     Returns:
-        model: Loaded pre-trained model.
-        tokenizer: Loaded tokenizer corresponding to the model.
+        Tuple containing loaded model and tokenizer
+        
+    Example:
+        >>> model, tokenizer = load_model_and_tokenizer("gpt2", device="cuda")
     """
     model = AutoModelForCausalLM.from_pretrained(
         model_name_or_path, 
@@ -32,18 +53,25 @@ def load_model_and_tokenizer(model_name_or_path: str, device='auto'):
     return model, tokenizer
 
 
-def get_hidden_states(prompt: str, model, tokenizer, device: str = 'cuda') -> np.ndarray:
-    """
-    Get hidden states for a single prompt without batching or padding.
-
+def get_hidden_states(
+    prompt: str,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    device: str = DEFAULT_DEVICE
+) -> np.ndarray:
+    """Get hidden states for a single input text.
+    
+    Encodes input text and retrieves hidden states from each layer,
+    then applies mean pooling over sequence length.
+    
     Args:
-        prompt (str): Text input for the model.
-        model: Pretrained model (e.g., AutoModelForCausalLM).
-        tokenizer: Pretrained tokenizer.
-        device (str): Device to run the model on, e.g., 'cuda' or 'cpu'.
-
+        prompt: Input text
+        model: Pretrained model
+        tokenizer: Corresponding tokenizer
+        device: Computation device
+        
     Returns:
-        np.ndarray: Hidden states for each layer, averaged across the sequence length.
+        Array of shape (num_layers, hidden_size) containing hidden states
     """
     inputs = tokenizer(prompt, return_tensors='pt').to(device)
     with torch.no_grad():
@@ -53,7 +81,7 @@ def get_hidden_states(prompt: str, model, tokenizer, device: str = 'cuda') -> np
     hidden_states = outputs.hidden_states  
     num_layers = len(hidden_states)
     
-    # Average pooling over the sequence length (dim=1) and convert to numpy
+    # Average pooling over sequence length (dim=1) and convert to numpy
     pooled_hidden_states = np.array([
         layer_hidden_state.mean(dim=1).squeeze().to(torch.float32).cpu().numpy()  # shape: (hidden_size,)
         for layer_hidden_state in hidden_states
@@ -62,20 +90,26 @@ def get_hidden_states(prompt: str, model, tokenizer, device: str = 'cuda') -> np
     return pooled_hidden_states
 
 
-def collect_hidden_states(inputs: List[str], task_types: List[str], model, tokenizer, device='cuda') -> Tuple[List[np.ndarray], List[str]]:
-    """
-    Collect hidden states for a list of input prompts along with their task types.
-
+def collect_hidden_states(
+    inputs: List[str],
+    task_types: List[str],
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    device: str = DEFAULT_DEVICE
+) -> Tuple[List[np.ndarray], List[str]]:
+    """Collect hidden states for multiple input texts.
+    
     Args:
-        inputs (List[str]): List of input text prompts.
-        task_types (List[str]): List of task types corresponding to each input.
-        model: Pretrained model.
-        tokenizer: Pretrained tokenizer.
-        device (str): Device to run the model on.
-
+        inputs: List of input texts
+        task_types: List of corresponding task types
+        model: Pretrained model
+        tokenizer: Corresponding tokenizer
+        device: Computation device
+        
     Returns:
-        hidden_states_list: List of hidden states for each input prompt.
-        labels: List of task type labels corresponding to each input.
+        Tuple containing:
+            - List of hidden states arrays, each of shape (num_layers, hidden_size)
+            - List of corresponding task type labels
     """
     hidden_states_list = []
     labels = []
@@ -89,14 +123,13 @@ def collect_hidden_states(inputs: List[str], task_types: List[str], model, token
 
 
 def create_task_type_mapping(task_types: List[str]) -> Dict[str, int]:
-    """
-    Create a mapping from task type string to integer labels.
-
+    """Create mapping from task types to integer labels.
+    
     Args:
-        task_types (List[str]): List of task type strings.
-
+        task_types: List of task type strings
+        
     Returns:
-        task_type_to_label (Dict[str, int]): Mapping of task type to integer labels.
+        Dictionary mapping task types to integer labels
     """
     task_type_to_label = {}
     label_counter = 0
@@ -110,25 +143,27 @@ def create_task_type_mapping(task_types: List[str]) -> Dict[str, int]:
 def get_embeddings(
     inputs: List[str],
     task_types: List[str],
-    model,
-    tokenizer,
-    device: str = 'cuda'
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    device: str = DEFAULT_DEVICE
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, int]]:
-    """
-    Compute embeddings for a list of input texts along with their task types.
-
+    """Compute embeddings for input texts.
+    
+    For each input text, gets token embeddings through model's embedding layer,
+    then applies mean pooling over sequence length to get fixed-size representation.
+    
     Args:
-        inputs (List[str]): List of input text strings.
-        task_types (List[str]): List of corresponding task types (labels).
-        model: The pre-trained model used to generate embeddings.
-        tokenizer: The pre-trained tokenizer.
-        device (str): The device for computation ('cuda' or 'cpu').
-
+        inputs: List of input texts
+        task_types: List of corresponding task types
+        model: Pretrained model
+        tokenizer: Corresponding tokenizer
+        device: Computation device
+        
     Returns:
         Tuple containing:
-            - embeddings: A numpy array of shape (N, hidden_size) representing the embeddings for each input.
-            - labels: A numpy array of integer labels corresponding to task types.
-            - task_type_to_label: A dictionary mapping task types to integer labels.
+            - Embedding matrix of shape (N, hidden_size)
+            - Integer label array of shape (N,)
+            - Dictionary mapping task types to integer labels
     """
     task_type_to_label = create_task_type_mapping(task_types)
     

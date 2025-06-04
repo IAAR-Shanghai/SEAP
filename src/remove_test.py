@@ -1,40 +1,50 @@
+"""
+Model pruning and layer analysis utilities.
+
+This module provides utilities for analyzing transformer model layers through
+pruning experiments, including layer-wise similarity analysis and visualization
+of pruning effects.
+
+Author: why
+Date: 2024
+"""
+
+# Standard library imports
 import os
 import sys
 import json
+from typing import Dict, List, Tuple, Any, Optional
+
+# Third-party imports
 import torch
 import torch.nn.functional as F
 import numpy as np
 from scipy.optimize import curve_fit
 from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Any
 
-# 添加项目根目录到 sys.path 以便导入模块
+# Add project root to sys.path for module imports
 project_root = os.path.abspath("..")
 sys.path.append(project_root)
 
-# 模型工具 & 剪枝应用函数
+# Local imports
 from src.pruning_utils.apply_pruning import apply_pruning_to_model
 
 
-# -----------------------------
-# 1. 计算每层隐藏状态之间的余弦相似度
-# -----------------------------
 def compute_layer_cos_sims(
-    model,
+    model: torch.nn.Module,
     tokenizer,
-    texts: List[str],
+    texts: List[str]
 ) -> List[float]:
-    """
-    计算模型每一层 hidden_states 的输入和输出之间的平均余弦相似度。
-
+    """Compute average cosine similarity between layer inputs and outputs.
+    
     Args:
-        model: 已加载的 Huggingface 模型（如 LlamaForCausalLM）
-        tokenizer: 对应 tokenizer
-        texts (List[str]): 输入文本列表
-
+        model: Loaded Huggingface model (e.g., LlamaForCausalLM)
+        tokenizer: Corresponding tokenizer
+        texts: List of input texts
+        
     Returns:
-        List[float]: 每一层 input/output 的平均 cosine 相似度
+        List of average cosine similarities for each layer
     """
     tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
     inputs = tokenizer(texts, return_tensors="pt", padding=True)
@@ -53,28 +63,24 @@ def compute_layer_cos_sims(
     return layer_sims
 
 
-# -----------------------------
-# 2. 随机剪枝 mask 生成函数
-# -----------------------------
 def generate_random_masks_for_layer(
-    model,
+    model: torch.nn.Module,
     layer_idx: int,
     target_pruning_ratio: float,
-    cumulative_attn_mask: torch.Tensor = None,
-    cumulative_mlp_mask: torch.Tensor = None
+    cumulative_attn_mask: Optional[torch.Tensor] = None,
+    cumulative_mlp_mask: Optional[torch.Tensor] = None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    为特定层生成随机 attention head 和 MLP 单元的剪枝 mask。
-
+    """Generate random pruning masks for attention heads and MLP units.
+    
     Args:
-        model: 模型实例
-        layer_idx: 当前层索引
-        target_pruning_ratio: 剪枝比例
-        cumulative_attn_mask: 累积的 attention mask
-        cumulative_mlp_mask: 累积的 MLP mask
-
+        model: Model instance
+        layer_idx: Current layer index
+        target_pruning_ratio: Pruning ratio (0 to 1)
+        cumulative_attn_mask: Cumulative attention mask from previous iterations
+        cumulative_mlp_mask: Cumulative MLP mask from previous iterations
+        
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: attention 和 MLP 的布尔 mask
+        Tuple of boolean masks for attention heads and MLP units
     """
     layer = model.model.layers[layer_idx]
     device = next(layer.parameters()).device
@@ -82,50 +88,50 @@ def generate_random_masks_for_layer(
     num_heads = model.config.num_attention_heads
     intermediate_size = layer.mlp.gate_proj.weight.shape[0]
 
-    attn_mask = cumulative_attn_mask.clone() if cumulative_attn_mask is not None else torch.ones(num_heads, dtype=torch.bool, device=device)
-    mlp_mask = cumulative_mlp_mask.clone() if cumulative_mlp_mask is not None else torch.ones(intermediate_size, dtype=torch.bool, device=device)
+    attn_mask = (cumulative_attn_mask.clone() if cumulative_attn_mask is not None 
+                 else torch.ones(num_heads, dtype=torch.bool, device=device))
+    mlp_mask = (cumulative_mlp_mask.clone() if cumulative_mlp_mask is not None 
+                else torch.ones(intermediate_size, dtype=torch.bool, device=device))
 
     num_attn_to_keep = int(num_heads * (1.0 - target_pruning_ratio))
     num_mlp_to_keep = int(intermediate_size * (1.0 - target_pruning_ratio))
 
-    # 更新 attention mask
+    # Update attention mask
     current_attn_indices = torch.nonzero(attn_mask, as_tuple=True)[0]
     if current_attn_indices.numel() > num_attn_to_keep:
-        prune_indices = current_attn_indices[torch.randperm(current_attn_indices.numel())[:current_attn_indices.numel() - num_attn_to_keep]]
+        prune_indices = current_attn_indices[torch.randperm(
+            current_attn_indices.numel())[:current_attn_indices.numel() - num_attn_to_keep]]
         attn_mask[prune_indices] = False
 
-    # 更新 MLP mask
+    # Update MLP mask
     current_mlp_indices = torch.nonzero(mlp_mask, as_tuple=True)[0]
     if current_mlp_indices.numel() > num_mlp_to_keep:
-        prune_indices = current_mlp_indices[torch.randperm(current_mlp_indices.numel())[:current_mlp_indices.numel() - num_mlp_to_keep]]
+        prune_indices = current_mlp_indices[torch.randperm(
+            current_mlp_indices.numel())[:current_mlp_indices.numel() - num_mlp_to_keep]]
         mlp_mask[prune_indices] = False
 
     return attn_mask, mlp_mask
 
 
-# -----------------------------
-# 3. 层级剪枝测试主函数
-# -----------------------------
 @torch.no_grad()
 def run_layerwise_remove_test(
-    model,
+    model: torch.nn.Module,
     tokenizer,
     text_list: List[str],
     prune_ratios: List[float],
     use_softmask: bool = True
 ) -> Dict[int, List[Tuple[float, float]]]:
-    """
-    对模型逐层剪枝测试，记录每一层不同剪枝比例下的最终输出与原始输出的相似度。
-
+    """Run layer-wise pruning tests and record output similarities.
+    
     Args:
-        model: 模型实例
-        tokenizer: tokenizer 实例
-        text_list: 输入文本列表
-        prune_ratios: 剪枝比例列表
-        use_softmask: 是否使用 softmask（unstructured）
-
+        model: Model instance
+        tokenizer: Tokenizer instance
+        text_list: List of input texts
+        prune_ratios: List of pruning ratios to test
+        use_softmask: Whether to use soft masking (unstructured)
+        
     Returns:
-        Dict[int, List[Tuple[float, float]]]: 每层剪枝后的相似度结果
+        Dictionary mapping layer indices to lists of (ratio, similarity) pairs
     """
     inputs = tokenizer(text_list, return_tensors="pt", padding=True)
     position_ids = inputs["attention_mask"].cumsum(dim=1) - 1  # [B, L]
@@ -170,7 +176,7 @@ def run_layerwise_remove_test(
                 head_dim=head_dim
             )
 
-            # 从该层 forward 到最后一层
+            # Forward from current layer to final layer
             h = layer_input
             for i in range(layer_idx, num_layers):
                 h = model.model.layers[i](
@@ -182,23 +188,31 @@ def run_layerwise_remove_test(
             ref = original_final_output.to(final_output.device)
             sim = F.cosine_similarity(final_output, ref, dim=-1).mean().item()
 
-            print(f"[Layer {layer_idx} | Ratio={ratio:.1f}] CosSim = {sim:.4f} | Kept heads: {attn_mask.sum().item()}, MLP: {mlp_mask.sum().item()}")
+            print(f"[Layer {layer_idx} | Ratio={ratio:.1f}] CosSim = {sim:.4f} | "
+                  f"Kept heads: {attn_mask.sum().item()}, MLP: {mlp_mask.sum().item()}")
             results.append((ratio, sim))
 
         all_results[layer_idx] = results
 
     return all_results
 
-def plot_remove_test(results_by_layer: Dict[int, List[Tuple[float, float]]],
-                     ratios_to_plot: List[float]):
-    """
-    绘制各剪枝比例下各层相似度的折线图。
+
+def plot_remove_test(
+    results_by_layer: Dict[int, List[Tuple[float, float]]],
+    ratios_to_plot: List[float]
+) -> None:
+    """Plot line graphs of layer similarities at different pruning ratios.
+    
+    Args:
+        results_by_layer: Dictionary of pruning results by layer
+        ratios_to_plot: List of pruning ratios to include in plot
     """
     layers = sorted(results_by_layer.keys())
     for ratio in ratios_to_plot:
         sims = []
         for layer in layers:
-            sim = next((s for r, s in results_by_layer[layer] if abs(r - ratio) < 1e-6), None)
+            sim = next((s for r, s in results_by_layer[layer] 
+                       if abs(r - ratio) < 1e-6), None)
             sims.append(sim)
         plt.plot(layers, sims, marker='o', label=f"Ratio={ratio:.1f}")
 
@@ -211,11 +225,40 @@ def plot_remove_test(results_by_layer: Dict[int, List[Tuple[float, float]]],
     plt.show()
 
 
-def logistic_fn(x, a, b):
+def logistic_fn(x: float, a: float, b: float) -> float:
+    """Logistic function for curve fitting.
+    
+    Args:
+        x: Input value
+        a: Slope parameter
+        b: Offset parameter
+        
+    Returns:
+        Logistic function value
+    """
     return 1 / (1 + np.exp(-a * x + b))
 
 
-def remove_outliers(x: np.ndarray, y: np.ndarray, method: str = "iqr", threshold: float = 1.5):
+def remove_outliers(
+    x: np.ndarray,
+    y: np.ndarray,
+    method: str = "iqr",
+    threshold: float = 1.5
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Remove outliers from data using specified method.
+    
+    Args:
+        x: Input array
+        y: Output array
+        method: Outlier detection method ('iqr' or 'std')
+        threshold: Threshold for outlier detection
+        
+    Returns:
+        Tuple of cleaned x and y arrays
+        
+    Raises:
+        ValueError: If invalid method is specified
+    """
     mask = ~np.isnan(y)
     x, y = x[mask], y[mask]
 
@@ -234,6 +277,7 @@ def remove_outliers(x: np.ndarray, y: np.ndarray, method: str = "iqr", threshold
 
     return x[mask], y[mask]
 
+
 def fit_logistic_curves(
     remove_results: Dict[int, List[Tuple[float, float]]],
     protect_head_layers: int = 2,
@@ -242,18 +286,24 @@ def fit_logistic_curves(
     outlier_threshold: float = 1.5,
     fit_linear: bool = True
 ) -> Dict[str, Any]:
-    """
-    使用 remove_results 中每层多个剪枝率下的平均相似度来拟合 logistic 和/或 linear 曲线。
+    """Fit logistic and/or linear curves to layer-wise pruning results.
     
+    Args:
+        remove_results: Dictionary of pruning results by layer
+        protect_head_layers: Number of initial layers to exclude
+        protect_tail_layers: Number of final layers to exclude
+        outlier_method: Method for outlier detection
+        outlier_threshold: Threshold for outlier detection
+        fit_linear: Whether to fit linear curve
+        
     Returns:
-        {
-            'x': np.ndarray,
-            'y': np.ndarray,
-            'logistic': np.ndarray or None,
-            'logistic_params': Dict[str, float] or None,
-            'linear': np.ndarray or None,
-            'linear_params': Dict[str, float] or None,
-        }
+        Dictionary containing:
+            - x: Cleaned x values
+            - y: Cleaned y values
+            - logistic: Logistic fit values (if successful)
+            - logistic_params: Logistic parameters (if successful)
+            - linear: Linear fit values (if requested)
+            - linear_params: Linear parameters (if requested)
     """
     all_layers = sorted(remove_results.keys())
     num_layers = len(all_layers)
@@ -274,11 +324,12 @@ def fit_logistic_curves(
     x = np.array(x_vals)
     y = np.array(y_vals)
 
-    # 过滤离群点
-    x_clean, y_clean = remove_outliers(x, y, method=outlier_method, threshold=outlier_threshold)
+    # Remove outliers
+    x_clean, y_clean = remove_outliers(x, y, method=outlier_method,
+                                     threshold=outlier_threshold)
     result = {'x': x_clean, 'y': y_clean}
 
-    # logistic 拟合
+    # Fit logistic curve
     try:
         popt, _ = curve_fit(logistic_fn, x_clean, y_clean, p0=(0.3, 10))
         a_log, b_log = popt
@@ -291,7 +342,7 @@ def fit_logistic_curves(
         result['logistic'] = None
         result['logistic_params'] = None
 
-    # 线性拟合
+    # Fit linear curve
     if fit_linear:
         model = LinearRegression().fit(x_clean.reshape(-1, 1), y_clean)
         coef, intercept = model.coef_[0], model.intercept_
@@ -305,21 +356,22 @@ def fit_logistic_curves(
 
     return result
 
+
 def plot_fitted_curves(
     fitted_result: Dict[str, Any],
     show_data: bool = True,
     show_logistic: bool = True,
     show_linear: bool = True,
     title: str = "Fitted Curve from Remove Test"
-):
-    """
-    绘制单个拟合结果的曲线与数据点。
+) -> None:
+    """Plot fitted curves and data points.
     
     Args:
-        fitted_result: 来自 fit_logistic_curves_from_remove_results 的结果字典
-        show_data: 是否绘制散点原始点
-        show_logistic: 是否绘制 logistic 曲线
-        show_linear: 是否绘制线性曲线
+        fitted_result: Result dictionary from fit_logistic_curves
+        show_data: Whether to plot original data points
+        show_logistic: Whether to plot logistic curve
+        show_linear: Whether to plot linear curve
+        title: Plot title
     """
     x = fitted_result["x"]
     y = fitted_result["y"]
@@ -341,25 +393,34 @@ def plot_fitted_curves(
     plt.tight_layout()
     plt.show()
 
+
 def save_layerwise_results(
     model_name: str,
     cos_sims: List[float],
     remove_results: Dict[int, List[Tuple[float, float]]],
-    fitted_result: Dict[str, Any] = None,
+    fitted_result: Optional[Dict[str, Any]] = None,
     base_dir: str = "../layer_importance"
-):
-    import os, json
+) -> None:
+    """Save layer-wise analysis results to disk.
+    
+    Args:
+        model_name: Name of the model
+        cos_sims: List of cosine similarities
+        remove_results: Dictionary of pruning results
+        fitted_result: Optional dictionary of curve fitting results
+        base_dir: Base directory for saving results
+    """
     model_dir = os.path.join(base_dir, model_name)
     os.makedirs(model_dir, exist_ok=True)
 
-    # 保存 cos_sims
+    # Save cosine similarities
     with open(os.path.join(model_dir, "layer_cos_similarity.json"), "w") as f:
         json.dump({
             "model_name": model_name,
             "cos_sims": {f"layer_{i}": sim for i, sim in enumerate(cos_sims)}
         }, f, indent=2)
 
-    # 保存 remove_results
+    # Save remove test results
     with open(os.path.join(model_dir, "remove_test_results.json"), "w") as f:
         json.dump({
             "model_name": model_name,
@@ -369,9 +430,9 @@ def save_layerwise_results(
             }
         }, f, indent=2)
 
-    # 保存拟合参数（如果提供）
+    # Save fitted parameters if provided
     if fitted_result:
-        if "linear_params" in fitted_result and fitted_result["linear_params"] is not None:
+        if "linear_params" in fitted_result and fitted_result["linear_params"]:
             with open(os.path.join(model_dir, "fitted_meta_linear.json"), "w") as f:
                 json.dump({
                     "model_name": model_name,
@@ -379,7 +440,7 @@ def save_layerwise_results(
                     **fitted_result["linear_params"]
                 }, f, indent=2)
 
-        if "logistic_params" in fitted_result and fitted_result["logistic_params"] is not None:
+        if "logistic_params" in fitted_result and fitted_result["logistic_params"]:
             with open(os.path.join(model_dir, "fitted_meta_logistic.json"), "w") as f:
                 json.dump({
                     "model_name": model_name,
@@ -389,20 +450,34 @@ def save_layerwise_results(
 
     print(f"[✓] Saved all data under: {os.path.abspath(model_dir)}")
 
+
 def load_layerwise_results(
     model_name: str,
     base_dir: str = "../layer_importance"
 ) -> Tuple[str, List[float], Dict[int, List[Tuple[float, float]]], Dict[str, Dict[str, float]]]:
-    import os, json
+    """Load layer-wise analysis results from disk.
+    
+    Args:
+        model_name: Name of the model
+        base_dir: Base directory containing results
+        
+    Returns:
+        Tuple containing:
+            - Model name
+            - List of cosine similarities
+            - Dictionary of pruning results
+            - Dictionary of fitted parameters
+    """
     model_dir = os.path.join(base_dir, model_name)
 
-    # 加载 cos_sims
+    # Load cosine similarities
     with open(os.path.join(model_dir, "layer_cos_similarity.json"), "r") as f:
         data = json.load(f)
         model_name_check = data["model_name"]
-        cos_sims = [data["cos_sims"][f"layer_{i}"] for i in range(len(data["cos_sims"]))]
+        cos_sims = [data["cos_sims"][f"layer_{i}"] 
+                   for i in range(len(data["cos_sims"]))]
 
-    # 加载 remove_results
+    # Load remove test results
     with open(os.path.join(model_dir, "remove_test_results.json"), "r") as f:
         data = json.load(f)
         assert data["model_name"] == model_name_check
@@ -411,9 +486,8 @@ def load_layerwise_results(
             for layer, lst in data["remove_results"].items()
         }
 
-    # 加载拟合参数（logistic 和 linear）
+    # Load fitted parameters
     fitted_params = {}
-
     for fit_type in ["linear", "logistic"]:
         fpath = os.path.join(model_dir, f"fitted_meta_{fit_type}.json")
         if os.path.exists(fpath):

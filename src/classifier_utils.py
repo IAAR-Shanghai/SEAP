@@ -1,59 +1,110 @@
-# src/classifier_utils.py
+"""
+Classification utilities for machine learning tasks.
 
+This module provides utility functions for training and evaluating
+neural network classifiers on embedding data. It includes functions
+for model training, evaluation and performance reporting.
+
+Author: why
+Date: 2024
+"""
+
+# Standard library imports
+from typing import Tuple, Dict, Any
+
+# Third-party imports
+import numpy as np
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
-def train_classifier(embeddings, labels, test_size=0.2, random_state=42):
-    """
-    Train a multi-layer perceptron classifier on the given embeddings and labels.
+# Constants
+DEFAULT_TEST_SIZE = 0.2
+DEFAULT_RANDOM_STATE = 42
+DEFAULT_HIDDEN_LAYERS = (512, 256)
+DEFAULT_LEARNING_RATE = 1e-3
+DEFAULT_L2_ALPHA = 1e-4
+DEFAULT_MAX_ITER = 200
 
+def train_classifier(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    test_size: float = DEFAULT_TEST_SIZE,
+    random_state: int = DEFAULT_RANDOM_STATE
+) -> Tuple[Pipeline, np.ndarray, np.ndarray]:
+    """Train a multilayer perceptron classifier.
+    
+    Trains a classifier using standardized features and a multilayer perceptron.
+    The model uses two hidden layers with ReLU activation and Adam optimizer.
+    
+    Args:
+        embeddings: Feature matrix of shape (n_samples, n_features)
+        labels: Label array of shape (n_samples,)
+        test_size: Proportion of data to use for testing, range (0, 1)
+        random_state: Random seed for reproducibility
+        
     Returns:
-        trained pipeline (scaler + MLP), test features, test labels
+        Tuple containing:
+            - Trained Pipeline (with scaler and MLP classifier)
+            - Test set feature matrix
+            - Test set label array
     """
     X_train, X_test, y_train, y_test = train_test_split(
-        embeddings, labels, test_size=test_size, random_state=random_state, stratify=labels
+        embeddings, labels,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=labels
     )
 
-    # Build pipeline with standardization + MLP
+    # Build Pipeline: Standardization + MLP
     pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", MLPClassifier(
-            hidden_layer_sizes=(512, 256),  # Two hidden layers
+            hidden_layer_sizes=DEFAULT_HIDDEN_LAYERS,
             activation="relu",
             solver="adam",
-            alpha=1e-4,             # L2 regularization
-            learning_rate_init=1e-3,
-            max_iter=200,
+            alpha=DEFAULT_L2_ALPHA,
+            learning_rate_init=DEFAULT_LEARNING_RATE,
+            max_iter=DEFAULT_MAX_ITER,
             random_state=random_state,
             verbose=True
         ))
     ])
 
     pipeline.fit(X_train, y_train)
-
     return pipeline, X_test, y_test
 
-def evaluate_classifier(clf, X_test, y_test, task_type_to_label):
-    """
-    Evaluate the classifier on the test set and print a classification report.
-
+def evaluate_classifier(
+    clf: Pipeline,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    task_type_to_label: Dict[str, int]
+) -> None:
+    """Evaluate classifier performance on test set.
+    
+    Computes and prints a classification report including precision,
+    recall, and F1 scores for each class.
+    
     Args:
-        clf: Trained classifier model.
-        X_test (array-like): Feature matrix for the test set.
-        y_test (array-like): True labels for the test set.
-        task_type_to_label (dict): Mapping from task labels to task types.
-
+        clf: Trained classifier Pipeline
+        X_test: Test set feature matrix
+        y_test: True test set labels
+        task_type_to_label: Dictionary mapping task types to integer labels
+        
     Prints:
-        A classification report showing precision, recall, F1-score for each class.
+        Classification report showing performance metrics for each class
     """
-    # Predict labels for the test set
+    # Predict test set labels
     y_pred = clf.predict(X_test)
     
-    # Invert the label mapping (task_type_to_label) to get the label names
+    # Reverse label mapping for readability
     label_to_task_type = {v: k for k, v in task_type_to_label.items()}
     
-    # Print the classification report with human-readable task type names
-    print(classification_report(y_test, y_pred, target_names=label_to_task_type.values()))
+    # Print classification report with readable task type names
+    print(classification_report(
+        y_test,
+        y_pred,
+        target_names=label_to_task_type.values()
+    ))

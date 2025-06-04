@@ -1,18 +1,28 @@
 # /src/pruning_utils/generate_masks.py
 
 """
-This file is responsible for generating the final Boolean masks (attn_mask and mlp_mask) for pruning attention heads and MLP channels.
-These masks are based on pruning scores (scores_dict) calculated in compute_scores.py, combined with user-defined pruning strategies.
-For this version, only the FLAP pruning strategies, specifically "UL-UM" (layer-wise pruning), are supported.
-The masks can also be saved or loaded to/from files.
+Mask generation utilities for model pruning.
 
+This module provides functions for generating boolean masks to prune attention heads
+and MLP channels in transformer models. The masks are based on importance scores
+and user-defined pruning strategies. Currently supports FLAP pruning strategies,
+specifically "UL-UM" (layer-wise pruning).
+
+Author: why
+Date: 2024
 """
 
-import torch
-import math
+# Standard library imports
 import os
 from typing import Dict, Tuple, Any, List
+
+# Third-party imports
+import torch
+import math
+
+# Local imports
 from src.pruning_utils.sparsity_scheduler import get_layerwise_sparsity_map
+
 
 def generate_layerwise_masks_from_scores(
     attn_scores: torch.Tensor,
@@ -20,19 +30,18 @@ def generate_layerwise_masks_from_scores(
     attn_sparsity: float,
     mlp_sparsity: float,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Generate pruning masks for a single layer using per-module sparsity values.
-
-    This function prunes the lowest-scoring attention heads and MLP neurons by score ranking.
-
+    """Generate pruning masks for a single layer using per-module sparsity values.
+    
+    Prunes the lowest-scoring attention heads and MLP neurons by score ranking.
+    
     Args:
-        attn_scores (torch.Tensor): Scores for attention heads, shape [num_heads].
-        mlp_scores (torch.Tensor): Scores for MLP channels, shape [intermediate_size].
-        attn_sparsity (float): Fraction of attention heads to prune (0 ≤ s ≤ 1).
-        mlp_sparsity (float): Fraction of MLP channels to prune (0 ≤ s ≤ 1).
-
+        attn_scores: Scores for attention heads, shape [num_heads]
+        mlp_scores: Scores for MLP channels, shape [intermediate_size]
+        attn_sparsity: Fraction of attention heads to prune (0 ≤ s ≤ 1)
+        mlp_sparsity: Fraction of MLP channels to prune (0 ≤ s ≤ 1)
+        
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: Boolean masks (True = keep, False = prune):
+        Tuple containing boolean masks (True = keep, False = prune):
             - attn_mask: shape [num_heads]
             - mlp_mask: shape [intermediate_size]
     """
@@ -40,23 +49,24 @@ def generate_layerwise_masks_from_scores(
     num_heads = attn_scores.numel()
     num_mlp = mlp_scores.numel()
 
-    # Init all keep masks
+    # Initialize keep masks
     attn_mask = torch.ones(num_heads, dtype=torch.bool, device=device)
     mlp_mask = torch.ones(num_mlp, dtype=torch.bool, device=device)
 
-    # ---- Attention mask ----
+    # Generate attention mask
     num_attn_prune = int(num_heads * attn_sparsity)
     if num_attn_prune > 0:
         _, idx = torch.topk(attn_scores, k=num_attn_prune, largest=False)
         attn_mask[idx] = False
 
-    # ---- MLP mask ----
+    # Generate MLP mask
     num_mlp_prune = int(num_mlp * mlp_sparsity)
     if num_mlp_prune > 0:
         _, idx = torch.topk(mlp_scores, k=num_mlp_prune, largest=False)
         mlp_mask[idx] = False
 
     return attn_mask, mlp_mask
+
 
 def generate_masks_for_all_layers(
     scores_dict: Dict[int, Dict[str, torch.Tensor]],
@@ -70,24 +80,32 @@ def generate_masks_for_all_layers(
     remove_results: Dict[int, List[Tuple[float, float]]] = None,
     fitted_results: Dict[str, Dict[str, float]] = None
 ) -> Tuple[Dict[int, torch.Tensor], Dict[int, torch.Tensor]]:
-    """
-    Generate pruning masks for all layers based on the selected sparsity strategy.
-    Now supports: "uniform", "global", "cosine", "retention", "linear_fit", "logistic_fit".
-
+    """Generate pruning masks for all layers based on selected sparsity strategy.
+    
+    Supports strategies:
+        - "uniform": Uniform sparsity across layers
+        - "global": Global importance ranking
+        - "cosine": Based on layer-wise cosine similarity
+        - "retention": Based on layer-wise retention tests
+        - "linear_fit": Based on linear regression fit
+        - "logistic_fit": Based on logistic regression fit
+    
     Args:
-        scores_dict: Per-layer importance scores.
-        strategy: Strategy name.
-        pruning_ratio: Target global sparsity.
-        hidden_size: Required for global strategy.
-        num_heads: Required for global strategy.
-        total_layers: Total number of layers (optional).
+        scores_dict: Per-layer importance scores
+        strategy: Strategy name
+        pruning_ratio: Target global sparsity
+        hidden_size: Required for global strategy
+        num_heads: Required for global strategy
+        total_layers: Total number of layers (optional)
         strategy_kwargs: Dict containing protect_head, protect_tail, etc.
-        cos_sims: List of cosine similarities per layer (for "cosine" strategy).
-        remove_results: Per-layer similarity retention test (for "retention").
-        fitted_results: Dict with linear/logistic fit params (for "linear_fit", "logistic_fit").
-
+        cos_sims: List of cosine similarities per layer (for "cosine" strategy)
+        remove_results: Per-layer similarity retention test (for "retention")
+        fitted_results: Dict with linear/logistic fit params
+        
     Returns:
-        attn_masks, mlp_masks: Dicts mapping layer index to boolean mask tensors.
+        Tuple containing:
+            - attn_masks: Dict mapping layer index to attention boolean masks
+            - mlp_masks: Dict mapping layer index to MLP boolean masks
     """
     strategy_kwargs = strategy_kwargs or {}
     num_layers = total_layers or len(scores_dict)
@@ -137,64 +155,69 @@ def generate_masks_for_all_layers(
 
 def save_masks_to_file(
     attn_masks: Dict[int, torch.Tensor],
-    mlp_masks:  Dict[int, torch.Tensor],
+    mlp_masks: Dict[int, torch.Tensor],
     file_path: str
-):
-    """
-    Save the attention and MLP mask dictionaries to a file.
-
+) -> None:
+    """Save attention and MLP mask dictionaries to a file.
+    
     Args:
-        attn_masks (Dict[int, torch.Tensor]): Attention masks to save.
-        mlp_masks (Dict[int, torch.Tensor]): MLP masks to save.
-        file_path (str): The file path where the masks will be saved (e.g., "mask_dir/masks.pt").
+        attn_masks: Attention masks to save
+        mlp_masks: MLP masks to save
+        file_path: Path where masks will be saved (e.g., "mask_dir/masks.pt")
     """
     to_save = {
         "attn_masks": {k: v.cpu() for k, v in attn_masks.items()},
-        "mlp_masks":  {k: v.cpu() for k, v in mlp_masks.items()}
+        "mlp_masks": {k: v.cpu() for k, v in mlp_masks.items()}
     }
     torch.save(to_save, file_path)
     print(f"[save_masks_to_file] Saved masks to {file_path}")
 
+
 def load_masks_from_file(file_path: str) -> Tuple[Dict[int, torch.Tensor], Dict[int, torch.Tensor]]:
-    """
-    Load attention and MLP masks from a file.
-
+    """Load attention and MLP masks from a file.
+    
     Args:
-        file_path (str): The path to the saved mask file.
-
+        file_path: Path to the saved mask file
+        
     Returns:
-        Tuple[Dict[int, torch.Tensor], Dict[int, torch.Tensor]]:
-            - attn_masks: A dictionary of attention masks.
-            - mlp_masks: A dictionary of MLP masks.
+        Tuple containing:
+            - attn_masks: Dictionary of attention masks
+            - mlp_masks: Dictionary of MLP masks
+            
+    Raises:
+        FileNotFoundError: If mask file is not found
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Mask file not found: {file_path}")
     loaded = torch.load(file_path)
     attn_masks = loaded["attn_masks"]
-    mlp_masks  = loaded["mlp_masks"]
+    mlp_masks = loaded["mlp_masks"]
     print(f"[load_masks_from_file] Loaded masks from {file_path}")
     return attn_masks, mlp_masks
+
 
 def compute_layerwise_sparsity(
     attn_masks: Dict[int, torch.Tensor],
     mlp_masks: Dict[int, torch.Tensor],
     hidden_size: int,
     num_heads: int
-) -> Dict[int, Dict[str, float]]:
-    """
-    Compute the sparsity (pruning ratio) for each layer's attention heads and MLP channels,
-    and aggregate a global cost-weighted sparsity.
-
+) -> Tuple[Dict[int, Dict[str, float]], float]:
+    """Compute sparsity ratios for each layer's attention heads and MLP channels.
+    
+    Calculates per-layer sparsity and aggregates a global cost-weighted sparsity.
+    
     Args:
-        attn_masks (Dict[int, torch.Tensor]): Attention masks for each layer.
-        mlp_masks (Dict[int, torch.Tensor]): MLP masks for each layer.
-        hidden_size (int): Hidden size of the transformer.
-        num_heads (int): Number of attention heads.
-
+        attn_masks: Attention masks for each layer
+        mlp_masks: MLP masks for each layer
+        hidden_size: Hidden size of the transformer
+        num_heads: Number of attention heads
+        
     Returns:
-        Dict[int, Dict[str, float]]: Layer-wise sparsities plus a "global_sparsity" key for total.
+        Tuple containing:
+            - Dictionary mapping layer indices to sparsity metrics
+            - Global sparsity ratio (cost-weighted)
     """
-    def compression_factor(hidden_size, num_heads):
+    def compression_factor(hidden_size: int, num_heads: int) -> float:
         return (4.0 / 3.0) * (hidden_size / num_heads)
 
     results = {}

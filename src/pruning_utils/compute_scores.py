@@ -1,32 +1,46 @@
-import torch
+"""
+Importance score computation utilities for model pruning.
+
+This module provides functions for computing importance scores of attention heads
+and MLP channels in transformer models, supporting different scoring methods like
+WIFV (Weighted Input Feature Variance) and WIFN (Weighted Input Feature Norm).
+
+Author: why
+Date: 2024
+"""
+
+# Standard library imports
 from typing import Dict, Any, Tuple
+
+# Third-party imports
+import torch
 
 # ======================== #
 # Scoring Method Registry  #
 # ======================== #
 
 def score_wifv(stats: Dict[str, torch.Tensor], weights: torch.Tensor) -> torch.Tensor:
-    """Weighted Input Feature Variance (WIFV).
-
+    """Compute Weighted Input Feature Variance (WIFV) scores.
+    
     Args:
-        stats: Dictionary containing 'var' and optionally 'l2' activations.
-        weights: Corresponding weight tensor.
-
+        stats: Dictionary containing 'var' and optionally 'l2' activations
+        weights: Corresponding weight tensor
+        
     Returns:
-        Tensor with importance scores.
+        Tensor with importance scores based on variance
     """
     return stats["var"] * weights
 
 
 def score_wifn(stats: Dict[str, torch.Tensor], weights: torch.Tensor) -> torch.Tensor:
-    """Weighted Input Feature Norm (WIFN).
-
+    """Compute Weighted Input Feature Norm (WIFN) scores.
+    
     Args:
-        stats: Dictionary containing 'var' and optionally 'l2' activations.
-        weights: Corresponding weight tensor.
-
+        stats: Dictionary containing 'var' and optionally 'l2' activations
+        weights: Corresponding weight tensor
+        
     Returns:
-        Tensor with importance scores.
+        Tensor with importance scores based on L2 norm
     """
     source = stats["l2"] if stats["l2"] is not None else stats["var"]
     return torch.sqrt(source) * weights
@@ -48,18 +62,21 @@ def compute_attention_head_scores(
     method: str = "WIFV"
 ) -> torch.Tensor:
     """Compute importance scores for attention heads in a given layer.
-
+    
     Args:
-        layer_idx: Index of the current transformer layer.
-        activation_info: Dictionary with activation statistics.
-        weight_info: Dictionary with weight statistics for each layer.
-        hidden_size: Total hidden dimension of the model.
-        num_heads: Number of attention heads.
-        head_dim: Dimension of each attention head.
-        method: Scoring method to use ("WIFV" or "WIFN").
-
+        layer_idx: Index of the current transformer layer
+        activation_info: Dictionary with activation statistics
+        weight_info: Dictionary with weight statistics for each layer
+        hidden_size: Total hidden dimension of the model
+        num_heads: Number of attention heads
+        head_dim: Dimension of each attention head
+        method: Scoring method to use ("WIFV" or "WIFN")
+        
     Returns:
-        Tensor of shape [num_heads] with scores for each head.
+        Tensor of shape [num_heads] with scores for each head
+        
+    Raises:
+        ValueError: If method is unsupported or required data is missing/mismatched
     """
     if method not in SCORE_METHODS:
         raise ValueError(f"Unsupported method: {method}")
@@ -93,17 +110,20 @@ def compute_mlp_channel_scores(
     method: str = "WIFV"
 ) -> torch.Tensor:
     """Compute importance scores for MLP channels.
-
+    
     Args:
-        layer_idx: Index of the current transformer layer.
-        activation_info: Dictionary with MLP activation statistics.
-        weight_info: Dictionary with weight statistics for each layer.
-        hidden_size: Total hidden dimension of the model.
-        intermediate_size: Size of the MLP intermediate representation.
-        method: Scoring method to use ("WIFV" or "WIFN").
-
+        layer_idx: Index of the current transformer layer
+        activation_info: Dictionary with MLP activation statistics
+        weight_info: Dictionary with weight statistics for each layer
+        hidden_size: Total hidden dimension of the model
+        intermediate_size: Size of the MLP intermediate representation
+        method: Scoring method to use ("WIFV" or "WIFN")
+        
     Returns:
-        Tensor of shape [intermediate_size] with scores for MLP channels.
+        Tensor of shape [intermediate_size] with scores for MLP channels
+        
+    Raises:
+        ValueError: If method is unsupported or required data is missing
     """
     if method not in SCORE_METHODS:
         raise ValueError(f"Unsupported method: {method}")
@@ -141,19 +161,24 @@ def compute_layer_scores(
     method: str = "WIFV"
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Compute both attention and MLP scores for a specific layer.
-
+    
     Args:
-        layer_idx: Layer index.
-        activation_data: Activation statistics for all layers.
-        weight_data: Weight statistics for all layers.
-        hidden_size: Hidden size of the model.
-        num_heads: Number of attention heads.
-        head_dim: Dimension of each attention head.
-        intermediate_size: Size of the MLP intermediate layer.
-        method: Scoring method.
-
+        layer_idx: Layer index
+        activation_data: Activation statistics for all layers
+        weight_data: Weight statistics for all layers
+        hidden_size: Hidden size of the model
+        num_heads: Number of attention heads
+        head_dim: Dimension of each attention head
+        intermediate_size: Size of the MLP intermediate layer
+        method: Scoring method
+        
     Returns:
-        A tuple of attention scores [num_heads] and MLP scores [intermediate_size].
+        Tuple containing:
+            - Attention scores tensor of shape [num_heads]
+            - MLP scores tensor of shape [intermediate_size]
+            
+    Raises:
+        ValueError: If activation data is missing for the specified layer
     """
     if layer_idx not in activation_data:
         raise ValueError(f"Missing activation data for layer {layer_idx}")
@@ -192,18 +217,21 @@ def compute_all_layers_scores(
     method: str = "WIFV"
 ) -> Dict[int, Dict[str, torch.Tensor]]:
     """Compute pruning scores for all layers in the model.
-
+    
     Args:
-        activation_data: Activation statistics for all layers.
-        weight_data: Weight statistics for all layers.
-        num_layers: Total number of transformer layers.
-        hidden_size: Model hidden size.
-        num_heads: Number of attention heads.
-        intermediate_size: MLP hidden size.
-        method: Scoring method to apply.
-
+        activation_data: Activation statistics for all layers
+        weight_data: Weight statistics for all layers
+        num_layers: Total number of transformer layers
+        hidden_size: Model hidden size
+        num_heads: Number of attention heads
+        intermediate_size: MLP hidden size
+        method: Scoring method to apply
+        
     Returns:
-        Dictionary mapping each layer index to its attention and MLP scores.
+        Dictionary mapping each layer index to its attention and MLP scores
+        
+    Raises:
+        ValueError: If method is unsupported or activation data is missing
     """
     if method not in SCORE_METHODS:
         raise ValueError(f"Method '{method}' not supported. Supported: {list(SCORE_METHODS.keys())}")

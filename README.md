@@ -1,202 +1,212 @@
-<div align="center"><h2>
-<img src="./assets/logo.png" alt="SEAP_logo" width=23px >SEAP: Training-free Sparse Expert Activation Pruning Unlock the Brainpower of Large Language Models</h2></div>
+# SEAP: Training-free Sparse Expert Activation Pruning
 
-<p align="center">
-    <!-- arXiv badge with a more vibrant academic red -->
-    <a href="https://arxiv.org/abs/2503.07605">
-        <img src="https://img.shields.io/badge/arXiv-Paper-B31B1B?style=flat-square&logo=arxiv&logoColor=white">
-    </a>
-    <!-- Github badge with clean dark color -->
-    <a href="https://github.com/IAAR-Shanghai/SEAP">
-        <img src="https://img.shields.io/badge/Github-Code-181717?style=flat-square&logo=github&logoColor=white">
-    </a>
-</p>
+<div align="center">
+  <img src="assets/logo.png" alt="SEAP logo" width="40">
+</div>
 
-> \[!IMPORTANT\]  
-> 🌟 **If you appreciate our work and are interested in the sparsification of large language models, please give us a star! We truly appreciate your support!**
+SEAP (Sparse Expert Activation Pruning) is a **training-free pruning method** for large language models that preserves task-specific performance while reducing model size and computation. This repository contains full implementations for data processing, activation extraction, pruning strategies, and evaluation.
 
-## :loudspeaker: News
-- **[2025/03]** We released SEAP: Training-free Sparse Expert Activation Pruning Unlock the Brainpower of Large Language Models. Check out the [paper](https://arxiv.org/abs/2503.11874).
+<div align="center">
+  <img src="assets/framework.png" alt="SEAP framework" width="700">
+</div>
 
-## Overview
-![framework](./assets/framework.png)
+---
 
-<details><summary>Abstract</summary>
-Large Language Models (LLMs) have achieved remarkable success but suffer from high computational costs during inference. This paper introduces Sparse Expert Activation Pruning (SEAP), a training-free method that selectively retains task-relevant parameters to reduce overhead. Inspired by clustering patterns in LLM activations, SEAP prunes the model while preserving task performance and improving efficiency. Experimental results show that at 50% pruning, SEAP outperforms WandA and FLAP by over 20%, and at 20% pruning, it only incurs a 2.2% performance drop. These findings demonstrate SEAP's scalability and effectiveness for optimizing LLMs.
-</details>
-
-We summarize our primary contributions as follows:
-
-- We analyze task-specific activation patterns in LLMs, revealing their correlation with hidden state distributions and providing new insights for adaptive sparsification.
-![hidden](./assets/hidden.png)
-- We propose SEAP, a training-free, task-adaptive pruning method that dynamically adjusts sparsity based on task type, improving efficiency while preserving performance.
-- We demonstrate that SEAP outperforms existing baselines in task accuracy, storage efficiency, and inference speed, confirming its effectiveness for efficient LLM deployment.
-
-
-## Quick Start
-
-1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Make the script executable:
-   ```bash
-   chmod +x quick_start.sh
-   ```
-3. Run the script:
-   ```bash
-   ./quick_start.sh
-   ```
-These three steps will automatically execute data preparation, model computation, pruning, and evaluation.
-
-### Project Structure
-
-<details>
-<summary>Click to expand project structure</summary>
+## 📁 Project Structure
 
 ```bash
-.
-├── README.md                      # Project overview and setup instructions
-├── data                            # Folder containing raw and processed data
-│   ├── processed                  # Processed data ready for use
-│   └── raw                        # Raw data before processing
-├── evaluate_multiple_tasks.py     # Script for evaluating model on multiple tasks
-├── evaluate_ppl.py                # Script for evaluating model's perplexity
-├── generate.py                    # Script for generating results or outputs
-├── notebook                        # Jupyter notebooks for analysis and exploration
-│   ├── 0_analysis.ipynb           # Initial exploratory analysis of the data
-│   ├── 1_data_exploration.ipynb   # Data exploration and visualization
-│   ├── 2_hidden_state_analysis.ipynb # Analysis of hidden states in the model
-│   ├── 3_activation_importance.ipynb # Exploring the importance of activations
-│   └── 4_classifier.ipynb         # Building and evaluating a classifier
-├── quick_start.sh                 # Shell script to quickly set up and run the pipeline
-├── requirements.txt               # List of Python dependencies required for the project
-├── scripts                         # Python scripts for the main pipeline
-│   ├── apply_pruning.py           # Script for applying pruning to the model
-│   ├── compute_activations.py     # Script for computing activations from the model
-│   ├── compute_masks.py           # Script for computing pruning masks
-│   └── data_preparation.py        # Script for preparing the data
-└── src                             # Source code for custom models or utilities
+SEAP/
+├── assets/                # Visuals for documentation and results
+├── data/                 # Raw task datasets
+│   └── raw/
+├── eval_summary.xlsx     # Summary of evaluation results
+├── evaluate_ppl.py       # Perplexity evaluation script
+├── evaluate_tasks.py     # Task-specific evaluation
+├── examples/             # Example outputs or templates
+├── generate.py           # Generation script (optional usage)
+├── layer_importance/     # Layer importance analysis (per model)
+├── notebook/             # Exploratory notebooks
+├── requirements.txt      # Python dependencies
+├── run_matrix_eval.py    # Parallel evaluation runner
+├── scripts/              # Pipeline scripts
+│   ├── apply_pruning.py
+│   ├── compute_activations.py
+│   ├── compute_masks.py
+│   ├── process_dataset.py
+│   └── prune_model.py
+└── src/                  # Source code
+    ├── activations.py
+    ├── analysis_utils.py
+    ├── classifier_utils.py
+    ├── data_preparation/
+    ├── model_utils.py
+    ├── pruning_utils/
+    ├── remove_test.py
+    └── visualization.py
 ```
 
-</details>
+---
 
-### Detailed Step-by-Step Implementation
-
-This guide provides a streamlined approach to applying Sparse Expert Activation Pruning (SEAP) to your model.
-
-### 1️⃣ Data Preparation  
-
-<details>
-<summary>Prepare and process the raw data</summary>
+## 🔧 Installation
 
 ```bash
-python scripts/data_preparation.py \
- --raw_data_dir data/raw \
- --processed_data_dir data/processed
+git clone https://github.com/IAAR-Shanghai/SEAP.git
+cd SEAP
+pip install -r requirements.txt
 ```
 
-- Converts raw data into a processed format.
+---
 
-</details>
+## 🧪 Usage
 
-### 2️⃣ Compute Activations  
+### Step 1: Run Model Pruning
 
-<details>
-<summary>Compute activations for pruning</summary>
+```bash
+python scripts/prune_model.py \
+  --model_root_path /path/to/models \
+  --model_name Llama-2-7b-hf \
+  --prompt_types knowledge zero_shot \
+  --tasks gsm8k mathqa arc_easy arc_challenge \
+  --method WIFV \
+  --sparsity_strategy retention \
+  --pruning_ratio 0.2
+```
+
+**Key arguments**:
+
+* `--model_name`: Model to prune
+* `--prompt_types`: Prompt styles (`zero_shot`, `cot`, `icl`, `knowledge`, `experts`)
+* `--tasks`: Benchmark tasks
+* `--method`: Pruning method (`WIFV` or `WIFN`)
+* `--sparsity_strategy`: Pruning strategy (`uniform`, `global`, `retention`, etc.)
+* `--pruning_ratio`: Percentage of expert heads to prune
+
+---
+
+### Step 2: Preprocess Data
+
+#### Preprocess datasets
+
+```bash
+python scripts/process_dataset.py \
+  --raw_data_dir data/raw \
+  --output_path data/processed/prompts.parquet \
+  --generate_base \
+  --subset_split train
+```
+
+#### Generate expert-specific prompts
+
+```bash
+python scripts/expert_data.py \
+  --data_path ./data/processed/prompts.parquet \
+  --output_dir ./data/experts \
+  --samples_per_expert 128
+```
+
+---
+
+### Step 3: Compute Activations
+
+#### For expert prompts
 
 ```bash
 python scripts/compute_activations.py \
-  --data_dir ./data/processed \
-  --model_root_path ../models \
+  --model_root_path /path/to/models \
   --model_name Llama-2-7b-hf \
-  --activations_root_path ./activations
+  --data_path ./data/experts/prompts.parquet \
+  --activations_root_path ./activations \
+  --prompt_types experts \
+  --sample_size 128
 ```
 
-- Extracts model activations to enable pruning.
-
-</details>
-
-### 3️⃣ Compute Pruning Masks  
-
-<details>
-<summary>Generate pruning masks based on activations</summary>
+#### For evaluation tasks
 
 ```bash
-python scripts/compute_masks.py \
-  --model_root_path ../models \
+python scripts/compute_activations.py \
+  --model_root_path /path/to/models \
   --model_name Llama-2-7b-hf \
   --activations_root_path ./activations \
-  --output_dir ./pruning_masks \
-  --pruning_ratio 0.2 \
-  --use_generic_mask
+  --prompt_types knowledge \
+  --sample_size 128 \
+  --tasks mbpp humaneval gsm8k mathqa arc_easy arc_challenge \
+          openbookqa winogrande piqa hellaswag boolq race
 ```
 
-- Generates pruning masks for the model.
+<div align="center">
+  <img src="assets/hiddenstates.png" height="200">
+  <img src="assets/l2norm.png" height="200">
+</div>
 
-</details>
+---
 
-### 4️⃣ Apply Pruning  
+### Step 4: Evaluate Pruned Models
 
-<details>
-<summary>Apply pruning using generated masks</summary>
+#### Evaluate multiple configurations in parallel
 
 ```bash
-python scripts/apply_pruning.py \
-  --model_root_path ../models \
+python run_matrix_eval.py \
+  --num_threads 4 \
+  --model_root_path /path/to/models \
+  --activations_root_path ./activations \
+  --output_base_dir ./eval_out
+```
+
+#### Evaluate a single configuration
+
+```bash
+python evaluate_tasks.py \
+  --model_root_path /path/to/models \
   --model_name Llama-2-7b-hf \
-  --masks_root_dir ./pruning_masks \
-  --task_types gsm8k \
-  --output_dir ./pruned_models \
-  --softmask \
-  --pruning_ratio 0.2 \
-  --activations_root_path ./activations
+  --activations_root_path ./activations \
+  --prompt_types knowledge \
+  --task_types gsm8k mathqa arc_easy arc_challenge \
+              openbookqa winogrande piqa hellaswag \
+  --calibration_task wikitext2 \
+  --method WIFV \
+  --sparsity_strategy retention \
+  --pruning_ratio 0.2
 ```
 
-- Prunes the model with the computed masks.
+---
 
-</details>
+## 🧠 Supported Task Groups
 
-### 5️⃣ Evaluate Pruned Model  
-
-<details>
-<summary>Evaluate model performance after pruning</summary>
-
-```bash
-python evaluate_multiple_tasks.py \
-    --model_root_path ../models \
-    --model_name Llama-2-7b-hf \
-    --pruning_indices_root_dir ./pruning_masks \
-    --pruning_ratio 0.2 \
-    --temp_dir ./pruned_models \
-    --output_base_dir ./eval_out \
-    --softmask \
-    --use_generic_mask
+```python
+EXPERT_TASK_GROUPS = {
+    "code_gen":       ["humaneval", "mbpp"],
+    "math_reasoning": ["gsm8k", "mathqa"],
+    "comparison":     ["boolq", "race"],
+    "knowledge_qa":   ["arc_challenge", "arc_easy", "openbookqa"],
+    "commonsense":    ["piqa", "winogrande", "hellaswag"]
+}
 ```
 
-- Assesses the pruned model's performance.
+---
 
-</details>
+## 📈 Results
 
-
-That's it! You’ve optimized your LLM using SEAP. 🚀
-
-
-## Results  
-
-- We evaluated SEAP's zero-shot performance across various benchmarks, demonstrating its ability to effectively reduce computational overhead while maintaining competitive accuracy. For Llama-2-7B, SEAP outperformed both WandA and FLAP, with only a 2.2% performance drop at 20% pruning and over 20% improvement at 50% pruning. Interestingly, results varied based on task nature, with general models outperforming expert models on some tasks due to richer knowledge corpora.
-
-<div style="display: flex; flex-direction: column; gap: 20px; justify-content: center; margin-bottom: 20px;">
-    <img src="./assets/result1.jpg" alt="result1" style="height: auto; width: 80%; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 0 auto;">
-    <img src="./assets/result2.jpg" alt="result2" style="height: auto; width: 80%; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 0 auto;">
+<div align="center">
+  <img src="assets/result.png" width="900">
 </div>
 
-- Regarding inference speed, SEAP significantly improves speed over non-structured pruning methods, completing pruning in 5–10 minutes on a single GPU. At higher pruning rates, SEAP maintains high speed with minimal differences compared to FLAP.
-
-- We compared different sparsity settings (LB, UL, and AL), and our Logistic-based (LB) setting consistently outperformed other strategies, showing more efficient resource allocation and better performance at both 20% and 50% pruning.
-
-<div style="display: flex; gap: 10px; justify-content: center;">
-    <img src="./assets/speedup.jpg" alt="speedup" style="height: 210px; width: auto; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-    <img src="./assets/ulud.jpg" alt="ulud" style="height: 210px; width: auto; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+<div align="center">
+  <img src="assets/sparsity.png" height="300">
+  <img src="assets/speedup.png" height="300">
 </div>
+
+---
+
+## 📄 Citation
+
+If you find SEAP helpful in your research, please cite:
+
+```bibtex
+@article{seap2024,
+  title={SEAP: Training-free Sparse Expert Activation Pruning for Unlocking the Brainpower of Large Language Models},
+  author={...},
+  journal={arXiv preprint arXiv:2503.07605},
+  year={2024}
+}
+```
 
