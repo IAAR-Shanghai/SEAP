@@ -134,8 +134,8 @@ python scripts/compute_activations.py \
 ```
 
 <div align="center">
-  <img src="assets/hiddenstates.png" height="200">
-  <img src="assets/l2norm.png" height="200">
+  <img src="assets/hiddenstates.png">
+  <img src="assets/l2norm.png">
 </div>
 
 ---
