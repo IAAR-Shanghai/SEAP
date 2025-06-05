@@ -59,31 +59,11 @@ pip install -r requirements.txt
 
 ## 🧪 Usage
 
-### Step 1: Run Model Pruning
-
-```bash
-python scripts/prune_model.py \
-  --model_root_path /path/to/models \
-  --model_name Llama-2-7b-hf \
-  --prompt_types knowledge zero_shot \
-  --tasks gsm8k mathqa arc_easy arc_challenge \
-  --method WIFV \
-  --sparsity_strategy retention \
-  --pruning_ratio 0.2
-```
-
-**Key arguments**:
-
-* `--model_name`: Model to prune
-* `--prompt_types`: Prompt styles (`zero_shot`, `cot`, `icl`, `knowledge`, `experts`)
-* `--tasks`: Benchmark tasks
-* `--method`: Pruning method (`WIFV` or `WIFN`)
-* `--sparsity_strategy`: Pruning strategy (`uniform`, `global`, `retention`, etc.)
-* `--pruning_ratio`: Percentage of expert heads to prune
+Below is the recommended end-to-end workflow.  Step 4 (evaluation) can be run independently once Steps 1–3 have finished.
 
 ---
 
-### Step 2: Preprocess Data
+### Step 1: Preprocess Data
 
 #### Preprocess datasets
 
@@ -106,7 +86,7 @@ python scripts/expert_data.py \
 
 ---
 
-### Step 3: Compute Activations
+### Step 2: Compute Activations
 
 #### For expert prompts
 
@@ -140,19 +120,37 @@ python scripts/compute_activations.py \
 
 ---
 
-### Step 4: Evaluate Pruned Models
-
-#### Evaluate multiple configurations in parallel
+### Step 3: Run Model Pruning
 
 ```bash
-python run_matrix_eval.py \
-  --num_threads 4 \
+python scripts/prune_model.py \
   --model_root_path /path/to/models \
-  --activations_root_path ./activations \
-  --output_base_dir ./eval_out
+  --model_name Llama-2-7b-hf \
+  --prompt_types knowledge zero_shot \
+  --tasks gsm8k mathqa arc_easy arc_challenge \
+  --method WIFV \
+  --sparsity_strategy retention \
+  --pruning_ratio 0.2
 ```
 
-#### Evaluate a single configuration
+**Key arguments**:
+
+* `--model_name`: Model to prune
+* `--prompt_types`: Prompt styles (`zero_shot`, `cot`, `icl`, `knowledge`, `experts`)
+* `--tasks`: Benchmark tasks
+* `--method`: Pruning method (`WIFV` or `WIFN`)
+* `--sparsity_strategy`: Pruning strategy (`uniform`, `global`, `retention`, etc.)
+* `--pruning_ratio`: Percentage of expert heads to prune
+
+---
+
+### Step 4: Evaluate Pruned Models
+
+After completing Steps 1-2, you can evaluate the pruned models using either single-task or matrix evaluation mode.
+
+#### Single Task Evaluation
+
+For evaluating specific model-task combinations:
 
 ```bash
 python evaluate_tasks.py \
@@ -167,6 +165,46 @@ python evaluate_tasks.py \
   --sparsity_strategy retention \
   --pruning_ratio 0.2
 ```
+
+**Key arguments**:
+* `--prompt_types`: Type of prompts to evaluate (`zero_shot`, `experts`, etc.)
+* `--task_types`: List of downstream tasks for evaluation
+* `--calibration_task`: Task used for calibration
+* `--sparsity_strategy`: Strategy for pruning (`uniform`, `global`, `cosine`, `retention`, etc.)
+* `--protect_head/--protect_tail`: Number of layers to protect from pruning
+* `--hardmask`: Use hard masking instead of soft masking
+* `--temp_dir`: Directory for temporary model files
+* `--keep_temp`: Keep temporary files after evaluation
+
+#### Matrix Evaluation
+
+For comprehensive evaluation across models, methods and tasks:
+
+```bash
+python run_matrix_eval.py \
+  --num_threads 4 \
+  --model_root_path /path/to/models \
+  --activations_root_path ./activations \
+  --output_base_dir ./eval_out
+```
+
+This will automatically evaluate combinations of:
+- Models: Llama-2-7b-hf, Llama-2-13b-hf
+- Methods: WIFV, WIFN  
+- Pruning ratios: 0.2, 0.3, 0.5
+- Task groups:
+  ```python
+  {
+      "code_gen":       ["humaneval", "mbpp"],
+      "math_reasoning": ["gsm8k", "mathqa"],
+      "comparison":     ["boolq", "race"],
+      "knowledge_qa":   ["arc_challenge", "arc_easy", "openbookqa"],
+      "commonsense":    ["piqa", "winogrande", "hellaswag"]
+  }
+  ```
+- Calibration tasks: wikitext2, c4
+
+Results will be saved in timestamped directories under `eval_out/` with detailed logs and a JSON summary.
 
 ---
 
@@ -209,4 +247,3 @@ If you find SEAP helpful in your research, please cite:
   year={2024}
 }
 ```
-
