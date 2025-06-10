@@ -202,7 +202,7 @@ This will automatically evaluate combinations of:
       "commonsense":    ["piqa", "winogrande", "hellaswag"]
   }
   ```
-- Calibration tasks: wikitext2, c4
+- Calibration tasks: wikitext2, c4, expert data for each task type, and datasets from Task groups.
 
 Results will be saved in timestamped directories under `eval_out/` with detailed logs and a JSON summary.
 
